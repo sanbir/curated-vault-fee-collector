@@ -1,0 +1,95 @@
+No files changed, compilation skipped
+
+Ran 14 tests for test/unit/HwmFeeMath.t.sol:HwmFeeMathTest
+[PASS] testFuzz_perf_feeNeverExceedsGain(uint256,uint256,uint256,uint16) (runs: 256, μ: 3727, ~: 3802)
+[PASS] testFuzz_perf_neverBelowHwm(uint256,uint256,uint256,uint16) (runs: 256, μ: 2522, ~: 2180)
+[PASS] test_assetsToSharesUp_roundsUp() (gas: 939)
+[PASS] test_assetsToSharesUp_zero() (gas: 413)
+[PASS] test_maxHwm_ratchetsUpOnly() (gas: 1163)
+[PASS] test_perf_aboveHwm() (gas: 1420)
+[PASS] test_perf_notSocialized() (gas: 3007)
+[PASS] test_perf_usdcLikeRatio() (gas: 1115)
+[PASS] test_perf_zeroAtHwm() (gas: 602)
+[PASS] test_perf_zeroBelowHwm() (gas: 882)
+[PASS] test_perf_zeroRateOrShares() (gas: 976)
+[PASS] test_splitFee_exact() (gas: 1179)
+[PASS] test_splitFee_roundsUp() (gas: 1332)
+[PASS] test_splitFee_zeroRate() (gas: 599)
+Suite result: ok. 14 passed; 0 failed; 0 skipped; finished in 10.25ms (19.03ms CPU time)
+
+Ran 3 tests for test/fluidlite/FeeFreeUnderlying.t.sol:FeeFreeUnderlyingTest
+[PASS] test_FeeFreeUnderlying_collectorIsOnlyFeeLayer() (gas: 1897522)
+Logs:
+  gain (USDC): 5987567844
+  perf collected (USDC): 1197541816
+  user net (USDC): 201776075897
+
+[PASS] test_FeeFreeUnderlying_zeroCollectorFees_grownRedeemEqualsNav() (gas: 1815469)
+Logs:
+  grown NAV (USDC): 206048048328
+  user net    (USDC): 206048048328
+
+[PASS] test_FeeFreeUnderlying_zeroCollectorFees_immediateRoundTrip() (gas: 1809108)
+Logs:
+  round-trip net vs principal (USDC): 199999999999 200000000000
+
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 805.99ms (11.53ms CPU time)
+
+Ran 8 tests for test/ultrayield/UltraYieldFeeCollector.t.sol:UltraYieldFeeCollectorForkTest
+[PASS] test_AsyncFeeCollection() (gas: 707108)
+Logs:
+  async fees collected (USDC): 3959983499
+
+[PASS] test_AsyncLifecycle_perfFeeAboveHwm() (gas: 773653)
+Logs:
+  alice net out (USDC): 114265816416
+
+[PASS] test_CancelRequest_restoresPosition() (gas: 613453)
+[PASS] test_Drawdown_noPerfFee_lossPassthrough() (gas: 745624)
+Logs:
+  alice net after drawdown (USDC): 88654500000
+
+[PASS] test_HwmGate_drawdownAndRecovery() (gas: 624964)
+Logs:
+  fee on 1.2->1.3 excess only (USDC): 1914000275
+
+[PASS] test_NotSocialized_acrossDrawdown() (gas: 932116)
+Logs:
+  alice fee: 4949980200
+  bob fee: 825000000
+
+[PASS] test_feeFreeUnderlying_zeroCollectorFees_fullGainPassthrough() (gas: 718718)
+Logs:
+  fee-free full-passthrough net (USDC): 124999999999
+
+[PASS] test_underlyingIsFeeFree() (gas: 16204)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 806.28ms (11.63ms CPU time)
+
+Ran 10 tests for test/fluidlite/FluidLiteFeeCollector.t.sol:FluidLiteFeeCollectorForkTest
+[PASS] test_Deposit_chargesDepositFeeAndCustodiesShares() (gas: 589588)
+Logs:
+  alice shares: 96807532902640126630853
+  entry ratio (USDC/share, 6-dec): 1022647
+
+[PASS] test_NoPerfFee_immediateRoundTrip() (gas: 676906)
+[PASS] test_PartialRedeem_preservesHwm() (gas: 700775)
+[PASS] test_PerfFee_isPerUser_notSocialized() (gas: 952883)
+Logs:
+  alice fee (USDC): 1038144621
+  bob fee   (USDC): 505144677
+
+[PASS] test_PerfFee_realAccrual_aboveHwm() (gas: 762352)
+Logs:
+  ratio0: 1022647
+  ratio1: 1062913
+  pending perf fee (USDC): 779610423
+  perf fee collected (USDC): 779220814
+
+[PASS] test_TopUp_crystallizesThenRaisesHwm() (gas: 844908)
+[PASS] test_custodyOnly_noPositionTransferFunction() (gas: 7765)
+[PASS] test_onlyOwner_setFees() (gas: 13452)
+[PASS] test_pause_blocksDeposit() (gas: 368246)
+[PASS] test_setFees_capEnforcedOnNewValue() (gas: 25112)
+Suite result: ok. 10 passed; 0 failed; 0 skipped; finished in 806.42ms (22.75ms CPU time)
+
+Ran 4 test suites in 5.42s (2.43s CPU time): 35 tests passed, 0 failed, 0 skipped (35 total tests)
