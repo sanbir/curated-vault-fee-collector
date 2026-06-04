@@ -1,4 +1,6 @@
+// SPDX-FileCopyrightText: 2025 P2P Validator <info@p2p.org>
 // SPDX-License-Identifier: MIT
+
 pragma solidity 0.8.28;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -10,18 +12,18 @@ library FeeMath {
     uint256 internal constant BPS = 10_000;
     uint256 internal constant WAD = 1e18;
 
-    /// @notice `amount * rateBps / 10_000`, rounded up. Zero if amount or rate is zero.
-    function bpsFee(uint256 amount, uint256 rateBps) internal pure returns (uint256) {
-        if (amount == 0 || rateBps == 0) return 0;
-        return Math.mulDiv(amount, rateBps, BPS, Math.Rounding.Ceil);
+    /// @notice `_amount * _rateBps / 10_000`, rounded up. Zero if amount or rate is zero.
+    function bpsFee(uint256 _amount, uint256 _rateBps) internal pure returns (uint256) {
+        if (_amount == 0 || _rateBps == 0) return 0;
+        return Math.mulDiv(_amount, _rateBps, BPS, Math.Rounding.Ceil);
     }
 
-    /// @notice AUM fee = `amount * aumFeePerBlock * blocksElapsed / 1e18`, rounded up.
-    /// @param amount          asset value being charged (the redeemed gross amount).
-    /// @param aumFeePerBlock  fraction of AUM charged per block, in 1e18 (WAD) scale.
-    /// @param blocksElapsed   number of blocks the assets were under management.
-    function aumFee(uint256 amount, uint256 aumFeePerBlock, uint256 blocksElapsed) internal pure returns (uint256) {
-        if (amount == 0 || aumFeePerBlock == 0 || blocksElapsed == 0) return 0;
-        return Math.mulDiv(amount, aumFeePerBlock * blocksElapsed, WAD, Math.Rounding.Ceil);
+    /// @notice AUM fee = `_amount * _aumFeePerBlock * _blocksElapsed / 1e18`, rounded up.
+    /// @param _amount         asset value being charged (the redeemed gross amount).
+    /// @param _aumFeePerBlock fraction of AUM charged per block, in 1e18 (WAD) scale.
+    /// @param _blocksElapsed  number of blocks the assets were under management.
+    function aumFee(uint256 _amount, uint256 _aumFeePerBlock, uint256 _blocksElapsed) internal pure returns (uint256) {
+        if (_amount == 0 || _aumFeePerBlock == 0 || _blocksElapsed == 0) return 0;
+        return Math.mulDiv(_amount, _aumFeePerBlock * _blocksElapsed, WAD, Math.Rounding.Ceil);
     }
 }

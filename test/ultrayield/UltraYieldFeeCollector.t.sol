@@ -69,7 +69,7 @@ contract UltraYieldFeeCollectorForkTest is BaseFork {
     }
 
     function _pendingShares(address user) internal view returns (uint256 s) {
-        (s,) = collector.pending(user);
+        (s,) = collector.getPending(user);
     }
 
     function _deposit(address user, uint256 assets) internal returns (uint256 shares) {
@@ -83,7 +83,7 @@ contract UltraYieldFeeCollectorForkTest is BaseFork {
     function test_AsyncDeposit_chargesDepositFee() public {
         _deposit(alice, 100_000e6);
         assertEq(IERC20(USDC).balanceOf(partner), 1_000e6, "deposit fee 1% -> partner");
-        (uint256 ps,) = collector.positionOf(alice);
+        (uint256 ps,) = collector.getPosition(alice);
         assertGt(ps, 0, "position recorded");
     }
 
@@ -93,7 +93,7 @@ contract UltraYieldFeeCollectorForkTest is BaseFork {
 
         vm.roll(block.number + 1_000_000); // under management for 1e6 blocks
 
-        uint256 gross = collector.positionValue(alice);
+        uint256 gross = collector.getPositionValue(alice);
         uint256 expWd = FeeMath.bpsFee(gross, WD);
         uint256 expAum = FeeMath.aumFee(gross, AUM, 1_000_000);
 
@@ -121,7 +121,7 @@ contract UltraYieldFeeCollectorForkTest is BaseFork {
         uint256 aliceBefore = IERC20(USDC).balanceOf(alice);
 
         vm.roll(block.number + 400_000);
-        uint256 gross = collector.positionValue(alice);
+        uint256 gross = collector.getPositionValue(alice);
 
         // Partner drives the whole async exit on behalf of alice.
         vm.prank(partner);
@@ -133,14 +133,14 @@ contract UltraYieldFeeCollectorForkTest is BaseFork {
         assertEq(IERC20(USDC).balanceOf(alice) - aliceBefore, net, "net assets to the USER");
         uint256 fees = IERC20(USDC).balanceOf(partner) - partnerAfterDep;
         assertApproxEqAbs(fees, FeeMath.bpsFee(gross, WD) + FeeMath.aumFee(gross, AUM, 400_000), 2, "fees to partner");
-        (uint256 ps,) = collector.positionOf(alice);
+        (uint256 ps,) = collector.getPosition(alice);
         assertEq(ps, 0, "position consumed");
     }
 
     function test_requestFor_onlyPartner() public {
         _deposit(alice, 1_000e6);
         vm.prank(alice);
-        vm.expectRevert(CuratedFeeCollectorBase.NotPartner.selector);
+        vm.expectRevert(CuratedFeeCollectorBase.CuratedFeeCollector__NotPartner.selector);
         collector.requestRedeemAllFor(alice);
     }
 }

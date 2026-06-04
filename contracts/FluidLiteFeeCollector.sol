@@ -1,4 +1,6 @@
+// SPDX-FileCopyrightText: 2025 P2P Validator <info@p2p.org>
 // SPDX-License-Identifier: MIT
+
 pragma solidity 0.8.28;
 
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
@@ -19,39 +21,39 @@ contract FluidLiteFeeCollector is CuratedFeeCollectorBase {
         uint256 _aumFeePerBlock
     ) CuratedFeeCollectorBase(_underlying, _owner, _partner, _depositFeeBps, _withdrawalFeeBps, _aumFeePerBlock) {}
 
-    /// @notice Withdraw `shares` of the caller's position; net assets to the caller, fees to the partner.
-    function withdraw(uint256 shares) external nonReentrant returns (uint256 net) {
-        return _withdraw(msg.sender, msg.sender, shares);
+    /// @notice Withdraw `_shares` of the caller's position; net assets to the caller, fees to the partner.
+    function withdraw(uint256 _shares) external nonReentrant returns (uint256 net) {
+        return _withdraw(msg.sender, msg.sender, _shares);
     }
 
     /// @notice Withdraw the caller's entire position.
     function withdrawAll() external nonReentrant returns (uint256 net) {
-        return _withdraw(msg.sender, msg.sender, _positions[msg.sender].shares);
+        return _withdraw(msg.sender, msg.sender, s_positions[msg.sender].shares);
     }
 
-    /// @notice Partner-initiated withdrawal of `shares` from `user`'s position; net assets go to `user`.
-    function withdrawFor(address user, uint256 shares) external nonReentrant returns (uint256 net) {
+    /// @notice Partner-initiated withdrawal of `_shares` from `_user`'s position; net assets go to `_user`.
+    function withdrawFor(address _user, uint256 _shares) external nonReentrant returns (uint256 net) {
         _onlyPartner();
-        return _withdraw(user, msg.sender, shares);
+        return _withdraw(_user, msg.sender, _shares);
     }
 
-    /// @notice Partner-initiated withdrawal of `user`'s entire position; net assets go to `user`.
-    function withdrawAllFor(address user) external nonReentrant returns (uint256 net) {
+    /// @notice Partner-initiated withdrawal of `_user`'s entire position; net assets go to `_user`.
+    function withdrawAllFor(address _user) external nonReentrant returns (uint256 net) {
         _onlyPartner();
-        return _withdraw(user, msg.sender, _positions[user].shares);
+        return _withdraw(_user, msg.sender, s_positions[_user].shares);
     }
 
-    /// @dev Synchronous redeem of `shares` from `user`'s position; fees to partner, net to `user`.
-    function _withdraw(address user, address caller, uint256 shares) internal returns (uint256) {
-        if (shares == 0) revert ZeroAmount();
-        Position storage p = _positions[user];
-        if (shares > p.shares) revert InsufficientShares();
+    /// @dev Synchronous redeem of `_shares` from `_user`'s position; fees to partner, net to `_user`.
+    function _withdraw(address _user, address _caller, uint256 _shares) internal returns (uint256) {
+        if (_shares == 0) revert CuratedFeeCollector__ZeroAmount();
+        Position storage p = s_positions[_user];
+        if (_shares > p.shares) revert CuratedFeeCollector__InsufficientShares();
 
         uint256 lastBlock = p.lastBlock; // AUM start; preserved for the remainder on partial exits
-        p.shares -= shares;
-        totalShares -= shares;
+        p.shares -= _shares;
+        s_totalShares -= _shares;
 
-        uint256 assetsGross = underlying.redeem(shares, address(this), address(this));
-        return _chargeAndPay(user, caller, shares, assetsGross, lastBlock);
+        uint256 assetsGross = i_underlying.redeem(_shares, address(this), address(this));
+        return _chargeAndPay(_user, _caller, _shares, assetsGross, lastBlock);
     }
 }

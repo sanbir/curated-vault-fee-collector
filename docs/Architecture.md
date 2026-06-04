@@ -33,21 +33,25 @@ Two concrete collectors over a shared base + a tiny pure library:
 
 ## 2. State
 
+Naming follows the P2P style: `i_` immutables, `s_` storage (both `internal`, exposed via `getX()` getters), `_arg` params, `_prefixed` internal functions, `Contract__Error` / `Contract__Event`.
+
 ```solidity
 struct Position { uint256 shares; uint256 lastBlock; } // lastBlock = AUM accrual start (share-weighted)
-mapping(address => Position) _positions;
-uint256 totalShares;
+mapping(address => Position) internal s_positions;
+uint256 internal s_totalShares;
 
 // async only (UltraYieldFeeCollector)
 struct Pending { uint256 shares; uint256 lastBlock; }   // lastBlock carried from the position at request
-mapping(address => Pending) pending;
-uint256 totalPending;
+mapping(address => Pending) internal s_pending;
+uint256 internal s_totalPending;
 
-// config
-IERC4626 underlying; IERC20 asset;
-address partner;                 // fee recipient AND authorized withdrawer-for-users
-uint16 depositFeeBps; uint16 withdrawalFeeBps; uint256 aumFeePerBlock; // WAD/block
-// caps: MAX_DEPOSIT_FEE=500 (5%), MAX_WITHDRAWAL_FEE=500 (5%), MAX_AUM_FEE_PER_BLOCK=1e12
+// config / immutables
+IERC4626 internal immutable i_underlying; IERC20 internal immutable i_asset;
+address internal s_partner;               // fee recipient AND authorized withdrawer-for-users
+uint16 internal s_depositFeeBps; uint16 internal s_withdrawalFeeBps; uint256 internal s_aumFeePerBlock; // WAD/block
+// caps (internal constant): MAX_DEPOSIT_FEE=500 (5%), MAX_WITHDRAWAL_FEE=500 (5%), MAX_AUM_FEE_PER_BLOCK=1e12
+// getters: getUnderlying/getAsset/getPartner/getDepositFeeBps/getWithdrawalFeeBps/getAumFeePerBlock/
+//          getTotalShares/getPosition/getPositionValue (+ async getPending/getTotalPending)
 ```
 
 Positions are an internal ledger — **no ERC-20/721 token, no `transfer`** — so they cannot be moved between addresses.

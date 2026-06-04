@@ -1,50 +1,42 @@
-Compiling 1 files with Solc 0.8.28
-Solc 0.8.28 finished in 742.77ms
-Compiler run successful with warnings:
-Warning (2018): Function state mutability can be restricted to view
-   --> test/fluidlite/FluidLiteFeeCollector.t.sol:211:5:
-    |
-211 |     function test_custodyOnly_noTransfer() public {
-    |     ^ (Relevant source part starts here and spans across multiple lines).
-
+No files changed, compilation skipped
 
 Ran 6 tests for test/unit/FeeMath.t.sol:FeeMathTest
-[PASS] testFuzz_aumFee_monotonicInBlocks(uint256,uint256,uint64,uint64) (runs: 256, μ: 6020, ~: 6232)
-[PASS] testFuzz_bpsFee_neverExceedsAmount(uint256,uint16) (runs: 256, μ: 1905, ~: 1629)
+[PASS] testFuzz_aumFee_monotonicInBlocks(uint256,uint256,uint64,uint64) (runs: 256, μ: 6158, ~: 6258)
+[PASS] testFuzz_bpsFee_neverExceedsAmount(uint256,uint16) (runs: 256, μ: 1887, ~: 1629)
 [PASS] test_aumFee_scalesWithBlocks() (gas: 5353)
 [PASS] test_aumFee_value() (gas: 1161)
 [PASS] test_aumFee_zeroCases() (gas: 941)
 [PASS] test_bpsFee_roundsUp() (gas: 2358)
-Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 6.50ms (9.38ms CPU time)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 6.85ms (10.36ms CPU time)
 
 Ran 4 tests for test/ultrayield/UltraYieldFeeCollector.t.sol:UltraYieldFeeCollectorForkTest
-[PASS] test_AsyncDeposit_chargesDepositFee() (gas: 497241)
-[PASS] test_AsyncExit_feesAtClaim() (gas: 750808)
+[PASS] test_AsyncDeposit_chargesDepositFee() (gas: 497235)
+[PASS] test_AsyncExit_feesAtClaim() (gas: 750895)
 Logs:
   async fees (wd+aum) USDC: 594000000
   async net to user USDC: 98406000000
 
-[PASS] test_Partner_requestAndClaimFor() (gas: 748988)
-[PASS] test_requestFor_onlyPartner() (gas: 496873)
-Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 943.96ms (3.74ms CPU time)
+[PASS] test_Partner_requestAndClaimFor() (gas: 748900)
+[PASS] test_requestFor_onlyPartner() (gas: 496881)
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 1.00s (3.78ms CPU time)
 
 Ran 12 tests for test/fluidlite/FluidLiteFeeCollector.t.sol:FluidLiteFeeCollectorForkTest
-[PASS] test_Aum_scalesWithBlocks() (gas: 578224)
-[PASS] test_Deposit_chargesDepositFeeToPartner() (gas: 580258)
-[PASS] test_NoAum_sameBlock() (gas: 673160)
-[PASS] test_PartialWithdraw_preservesLastBlock() (gas: 666734)
-[PASS] test_Partner_withdrawForUser() (gas: 679412)
-[PASS] test_TopUp_blendsLastBlock() (gas: 809781)
-[PASS] test_Withdraw_chargesWithdrawalAndAumToPartner() (gas: 681374)
+[PASS] test_Aum_scalesWithBlocks() (gas: 578181)
+[PASS] test_Deposit_chargesDepositFeeToPartner() (gas: 580215)
+[PASS] test_NoAum_sameBlock() (gas: 673108)
+[PASS] test_PartialWithdraw_preservesLastBlock() (gas: 666666)
+[PASS] test_Partner_withdrawForUser() (gas: 679379)
+[PASS] test_TopUp_blendsLastBlock() (gas: 809695)
+[PASS] test_Withdraw_chargesWithdrawalAndAumToPartner() (gas: 681270)
 Logs:
   withdrawal fee + AUM (USDC): 593703000
   AUM portion (USDC): 98950500
 
-[PASS] test_custodyOnly_noTransfer() (gas: 7778)
-[PASS] test_onlyOwner_setFees_and_setPartner() (gas: 17307)
-[PASS] test_pause_blocksDeposit() (gas: 368183)
-[PASS] test_setFees_capEnforced() (gas: 33911)
-[PASS] test_withdrawFor_onlyPartner() (gas: 575548)
-Suite result: ok. 12 passed; 0 failed; 0 skipped; finished in 943.96ms (14.74ms CPU time)
+[PASS] test_custodyOnly_noTransfer() (gas: 7799)
+[PASS] test_onlyOwner_setFees_and_setPartner() (gas: 17261)
+[PASS] test_pause_blocksDeposit() (gas: 368199)
+[PASS] test_setFees_capEnforced() (gas: 33730)
+[PASS] test_withdrawFor_onlyPartner() (gas: 575627)
+Suite result: ok. 12 passed; 0 failed; 0 skipped; finished in 1.00s (16.05ms CPU time)
 
-Ran 3 test suites in 3.09s (1.89s CPU time): 22 tests passed, 0 failed, 0 skipped (22 total tests)
+Ran 3 test suites in 3.66s (2.01s CPU time): 22 tests passed, 0 failed, 0 skipped (22 total tests)

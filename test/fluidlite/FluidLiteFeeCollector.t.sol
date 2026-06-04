@@ -35,11 +35,11 @@ contract FluidLiteFeeCollectorForkTest is BaseFork {
         partner = makeAddr("partner");
         alice = makeAddr("alice");
         collector = new FluidLiteFeeCollector(underlying, owner, partner, DEP, WD, AUM);
-        assertEq(address(collector.asset()), USDC, "asset USDC");
+        assertEq(address(collector.getAsset()), USDC, "asset USDC");
     }
 
     function _sharesOf(address user) internal view returns (uint256 s) {
-        (s,) = collector.positionOf(user);
+        (s,) = collector.getPosition(user);
     }
 
     /// @dev Actual assets the collector receives on redeem = previewRedeem (accounts for fLiteUSD's
@@ -65,7 +65,7 @@ contract FluidLiteFeeCollectorForkTest is BaseFork {
         assertEq(IERC20(USDC).balanceOf(partner), amt / 100, "deposit fee 1% -> partner");
         assertEq(IERC20(FLITE_USD).balanceOf(address(collector)), shares, "collector custodies shares");
         assertEq(IERC20(FLITE_USD).balanceOf(alice), 0, "user holds no underlying shares");
-        (uint256 ps, uint256 lastBlock) = collector.positionOf(alice);
+        (uint256 ps, uint256 lastBlock) = collector.getPosition(alice);
         assertEq(ps, shares, "position recorded");
         assertEq(lastBlock, block.number, "AUM start block = deposit block");
     }
@@ -90,7 +90,7 @@ contract FluidLiteFeeCollectorForkTest is BaseFork {
         assertApproxEqAbs(net, gross - expWd - expAum, 50, "user got net");
         assertEq(IERC20(USDC).balanceOf(alice), net, "net delivered to user");
         assertGt(expAum, 0, "AUM accrued over blocks");
-        (uint256 ps,) = collector.positionOf(alice);
+        (uint256 ps,) = collector.getPosition(alice);
         assertEq(ps, 0, "position closed");
         console2.log("withdrawal fee + AUM (USDC):", partnerFees);
         console2.log("AUM portion (USDC):", expAum);
@@ -125,14 +125,14 @@ contract FluidLiteFeeCollectorForkTest is BaseFork {
         assertEq(IERC20(USDC).balanceOf(alice) - aliceBefore, net, "net assets went to the USER");
         uint256 partnerFees = IERC20(USDC).balanceOf(partner) - partnerAfterDep;
         assertApproxEqAbs(partnerFees, FeeMath.bpsFee(gross, WD) + FeeMath.aumFee(gross, AUM, 500_000), 50, "fees to partner");
-        (uint256 ps,) = collector.positionOf(alice);
+        (uint256 ps,) = collector.getPosition(alice);
         assertEq(ps, 0, "alice position closed by partner");
     }
 
     function test_withdrawFor_onlyPartner() public {
         _deposit(alice, 1_000e6);
         vm.prank(alice);
-        vm.expectRevert(CuratedFeeCollectorBase.NotPartner.selector);
+        vm.expectRevert(CuratedFeeCollectorBase.CuratedFeeCollector__NotPartner.selector);
         collector.withdrawAllFor(alice);
     }
 
@@ -151,10 +151,10 @@ contract FluidLiteFeeCollectorForkTest is BaseFork {
 
     function test_TopUp_blendsLastBlock() public {
         _deposit(alice, 100_000e6);
-        (, uint256 lb0) = collector.positionOf(alice);
+        (, uint256 lb0) = collector.getPosition(alice);
         vm.roll(block.number + 1_000_000);
         _deposit(alice, 100_000e6);
-        (, uint256 lb1) = collector.positionOf(alice);
+        (, uint256 lb1) = collector.getPosition(alice);
         assertGt(lb1, lb0, "blended start block moved forward after top-up");
         assertLt(lb1, block.number, "but is before the top-up block (older tranche pulls it back)");
     }
@@ -163,11 +163,11 @@ contract FluidLiteFeeCollectorForkTest is BaseFork {
 
     function test_PartialWithdraw_preservesLastBlock() public {
         uint256 shares = _deposit(alice, 100_000e6);
-        (, uint256 lb0) = collector.positionOf(alice);
+        (, uint256 lb0) = collector.getPosition(alice);
         vm.roll(block.number + 300_000);
         vm.prank(alice);
         collector.withdraw(shares / 2);
-        (uint256 ps, uint256 lb1) = collector.positionOf(alice);
+        (uint256 ps, uint256 lb1) = collector.getPosition(alice);
         assertEq(lb1, lb0, "remainder keeps original AUM start block");
         assertApproxEqAbs(ps, shares - shares / 2, 1, "remaining shares");
     }
@@ -176,16 +176,16 @@ contract FluidLiteFeeCollectorForkTest is BaseFork {
 
     function test_setFees_capEnforced() public {
         vm.prank(owner);
-        vm.expectRevert(CuratedFeeCollectorBase.FeeTooHigh.selector);
+        vm.expectRevert(CuratedFeeCollectorBase.CuratedFeeCollector__FeeTooHigh.selector);
         collector.setFees(100, 501, AUM); // withdrawal > 5% cap
 
         vm.prank(owner);
-        vm.expectRevert(CuratedFeeCollectorBase.FeeTooHigh.selector);
+        vm.expectRevert(CuratedFeeCollectorBase.CuratedFeeCollector__FeeTooHigh.selector);
         collector.setFees(100, 50, 1e12 + 1); // AUM > cap
 
         vm.prank(owner);
         collector.setFees(200, 100, 2e9);
-        assertEq(collector.aumFeePerBlock(), 2e9);
+        assertEq(collector.getAumFeePerBlock(), 2e9);
     }
 
     function test_onlyOwner_setFees_and_setPartner() public {
