@@ -6,7 +6,5 @@ pragma solidity 0.8.28;
 interface IUltraVault7540 {
     function requestRedeem(uint256 shares, address controller, address owner) external returns (uint256 requestId);
     function redeem(uint256 shares, address receiver, address controller) external returns (uint256 assets);
-    function cancelRedeemRequest(address controller) external returns (uint256 shares);
     function maxRedeem(address controller) external view returns (uint256);
-    function setOperator(address operator, bool approved) external returns (bool);
 }

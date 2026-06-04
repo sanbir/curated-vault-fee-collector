@@ -1,61 +1,57 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {CuratedFeeCollectorBase} from "./CuratedFeeCollectorBase.sol";
-import {HwmFeeMath} from "./libraries/HwmFeeMath.sol";
 
 /// @title FluidLiteFeeCollector
-/// @notice Per-user HWM fee layer for a *synchronous* ERC-4626 curated vault (e.g. Fluid Lite USD
-///         `fLiteUSD`, Fluid Lite ETH `iETHv2`). Exits complete in a single transaction.
+/// @notice Partner fee layer for a SYNCHRONOUS ERC-4626 curated vault (e.g. Fluid Lite USD `fLiteUSD`).
+///         Withdrawals complete in one transaction. Both the user and the partner can withdraw; assets go
+///         to the user, fees to the partner.
 contract FluidLiteFeeCollector is CuratedFeeCollectorBase {
-    using SafeERC20 for IERC20;
-
     constructor(
         IERC4626 _underlying,
         address _owner,
-        address _feeRecipient,
+        address _partner,
         uint16 _depositFeeBps,
-        uint16 _withdrawFeeBps,
-        uint16 _perfFeeBps
-    ) CuratedFeeCollectorBase(_underlying, _owner, _feeRecipient, _depositFeeBps, _withdrawFeeBps, _perfFeeBps) {}
+        uint16 _withdrawalFeeBps,
+        uint256 _aumFeePerBlock
+    ) CuratedFeeCollectorBase(_underlying, _owner, _partner, _depositFeeBps, _withdrawalFeeBps, _aumFeePerBlock) {}
 
-    /// @notice Redeem `sharesToRedeem` of the caller's underlying shares for the underlying asset.
-    /// @dev    Crystallizes the per-user performance fee first, then charges the withdrawal fee on
-    ///         the gross asset proceeds. HWM (a price) is preserved across partial withdrawals.
-    /// @return netOut Asset amount sent to `receiver` (after the withdrawal fee).
-    function redeem(uint256 sharesToRedeem, address receiver) public nonReentrant returns (uint256 netOut) {
-        if (sharesToRedeem == 0) revert ZeroAmount();
-        if (receiver == address(0)) revert ZeroAddress();
-
-        // Crystallize performance fee (may reduce the caller's share balance).
-        _crystallize(msg.sender);
-
-        Position storage p = _positions[msg.sender];
-        if (sharesToRedeem > p.shares) revert InsufficientShares();
-
-        uint256 assetsGross = underlying.redeem(sharesToRedeem, address(this), address(this));
-
-        p.shares -= sharesToRedeem;
-        totalUserShares -= sharesToRedeem;
-
-        (uint256 wdFee, uint256 net) = HwmFeeMath.splitFeeUp(assetsGross, withdrawFeeBps);
-        if (wdFee != 0) asset.safeTransfer(feeRecipient, wdFee);
-        asset.safeTransfer(receiver, net);
-        netOut = net;
-
-        emit WithdrawalProcessed(msg.sender, receiver, sharesToRedeem, assetsGross, wdFee, net);
+    /// @notice Withdraw `shares` of the caller's position; net assets to the caller, fees to the partner.
+    function withdraw(uint256 shares) external nonReentrant returns (uint256 net) {
+        return _withdraw(msg.sender, msg.sender, shares);
     }
 
-    /// @notice Redeem the caller's entire position.
-    function withdrawAll(address receiver) external returns (uint256 netOut) {
-        // Crystallize first so the redeemed amount reflects the post-fee share balance.
-        _crystallize(msg.sender);
-        uint256 shares = _positions[msg.sender].shares;
-        if (shares == 0) revert InsufficientShares();
-        return redeem(shares, receiver);
+    /// @notice Withdraw the caller's entire position.
+    function withdrawAll() external nonReentrant returns (uint256 net) {
+        return _withdraw(msg.sender, msg.sender, _positions[msg.sender].shares);
+    }
+
+    /// @notice Partner-initiated withdrawal of `shares` from `user`'s position; net assets go to `user`.
+    function withdrawFor(address user, uint256 shares) external nonReentrant returns (uint256 net) {
+        _onlyPartner();
+        return _withdraw(user, msg.sender, shares);
+    }
+
+    /// @notice Partner-initiated withdrawal of `user`'s entire position; net assets go to `user`.
+    function withdrawAllFor(address user) external nonReentrant returns (uint256 net) {
+        _onlyPartner();
+        return _withdraw(user, msg.sender, _positions[user].shares);
+    }
+
+    /// @dev Synchronous redeem of `shares` from `user`'s position; fees to partner, net to `user`.
+    function _withdraw(address user, address caller, uint256 shares) internal returns (uint256) {
+        if (shares == 0) revert ZeroAmount();
+        Position storage p = _positions[user];
+        if (shares > p.shares) revert InsufficientShares();
+
+        uint256 lastBlock = p.lastBlock; // AUM start; preserved for the remainder on partial exits
+        p.shares -= shares;
+        totalShares -= shares;
+
+        uint256 assetsGross = underlying.redeem(shares, address(this), address(this));
+        return _chargeAndPay(user, caller, shares, assetsGross, lastBlock);
     }
 }

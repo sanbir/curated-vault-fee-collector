@@ -2,147 +2,91 @@
 
 > Companion to [ADR.md](./ADR.md) and [Implementation-plan.md](./Implementation-plan.md).
 
----
-
 ## 1. Component overview
 
 ```
-                 end users
-                    │  deposit(asset) / redeem|requestRedeem+claim
-                    ▼
-   ┌───────────────────────────────────────────────┐
-   │  P2P Fee Collector  (one per underlying vault)  │   feeRecipient (P2P)
-   │  • Position{shares, hwm} per user (NON-transfer)│◄── collectFees() (asset)
-   │  • accruedFeeShares pool                        │
-   │  • deposit/withdraw fee (asset) + perf fee(skim)│
-   │  • HwmFeeMath (pure)                            │
-   └───────────────┬───────────────────────────────┘
-                   │ deposit / redeem / requestRedeem   (collector is the holder & controller)
+                 end users                         partner (wallet / custody)
+                    │ deposit / withdraw                │ withdrawFor / claimFor
+                    ▼                                   ▼
+   ┌─────────────────────────────────────────────────────────────┐
+   │  Curated Fee Collector  (one per underlying vault)            │   partner
+   │  • Position{shares, lastBlock} per user (NON-transferable)    │◄── deposit fee (asset, at deposit)
+   │  • deposit% + withdrawal% + per-block AUM fees                │◄── withdrawal + AUM fee (asset, at withdrawal)
+   │  • net assets ALWAYS go to the user                           │── net assets ─► user
+   └───────────────┬─────────────────────────────────────────────┘
+                   │ deposit / redeem / requestRedeem  (collector is holder & controller)
                    ▼
-   ┌───────────────────────────────────────────────┐
-   │  Curated underlying vault (Edge)                │
-   │  fLiteUSD (sync ERC-4626) | UltraVault (7540)   │── NAV via convertToAssets()
-   │  reads P2P NAV oracle (UltraYield)              │   ← P2P oracle (UltraYield only)
-   └───────────────────────────────────────────────┘
+   ┌─────────────────────────────────────────────────────────────┐
+   │  Curated underlying vault (UltraYield / Fluid Lite)           │
+   │  charges its OWN native fees (P2P + Edge)                     │
+   └─────────────────────────────────────────────────────────────┘
 ```
 
-Two concrete collectors, one shared math library:
+Two concrete collectors over a shared base + a tiny pure library:
 
 | Contract | Underlying | Exit model | File |
 |---|---|---|---|
-| `FluidLiteFeeCollector` | sync ERC-4626 (fLiteUSD, iETHv2) | synchronous `redeem` | `contracts/FluidLiteFeeCollector.sol` |
-| `UltraYieldFeeCollector` | ERC-7540 (UltraVault) | async request→fulfill→claim | `contracts/UltraYieldFeeCollector.sol` |
-| `HwmFeeMath` | — | — | `contracts/libraries/HwmFeeMath.sol` |
-
----
+| `FluidLiteFeeCollector` | sync ERC-4626 (fLiteUSD, iETHv2) | synchronous `withdraw` | `contracts/FluidLiteFeeCollector.sol` |
+| `UltraYieldFeeCollector` | ERC-7540 async (UltraVault) | `requestRedeem` → operator fulfill → `claim` | `contracts/UltraYieldFeeCollector.sol` |
+| `CuratedFeeCollectorBase` | — | deposit / fee-settlement / admin / partner auth | `contracts/CuratedFeeCollectorBase.sol` |
+| `FeeMath` | — | pure: deposit/withdrawal %, per-block AUM | `contracts/libraries/FeeMath.sol` |
 
 ## 2. State
 
 ```solidity
-struct Position {
-    uint256 shares;   // underlying-vault shares attributed to this user (collector custodies them)
-    uint256 hwm;      // high-water price = convertToAssets(SHARE_UNIT) at last crystallization (asset base-units / whole share)
-}
-mapping(address => Position) position;          // both collectors
-uint256 accruedFeeShares;                       // perf-fee shares skimmed, awaiting collectFees()
-uint256 totalManagedShares;                     // Σ position.shares + accruedFeeShares (invariant vs collector's underlying balance)
+struct Position { uint256 shares; uint256 lastBlock; } // lastBlock = AUM accrual start (share-weighted)
+mapping(address => Position) _positions;
+uint256 totalShares;
 
-// async-only (UltraYieldFeeCollector)
-struct Pending { uint256 shares; }              // requested, awaiting operator fulfillment
+// async only (UltraYieldFeeCollector)
+struct Pending { uint256 shares; uint256 lastBlock; }   // lastBlock carried from the position at request
 mapping(address => Pending) pending;
+uint256 totalPending;
 
 // config
-IERC4626 underlying; IERC20 asset; uint256 SHARE_UNIT; // = 10**underlyingDecimals
-uint16 depositFeeBps; uint16 withdrawFeeBps; uint16 perfFeeBps;
-address feeRecipient;
-// caps: MAX_DEPOSIT_FEE=500 (5%), MAX_WITHDRAWAL_FEE=200 (2%), MAX_PERFORMANCE_FEE=3000 (30%); BPS=10_000
+IERC4626 underlying; IERC20 asset;
+address partner;                 // fee recipient AND authorized withdrawer-for-users
+uint16 depositFeeBps; uint16 withdrawalFeeBps; uint256 aumFeePerBlock; // WAD/block
+// caps: MAX_DEPOSIT_FEE=500 (5%), MAX_WITHDRAWAL_FEE=500 (5%), MAX_AUM_FEE_PER_BLOCK=1e12
 ```
 
-Positions are an internal ledger — **no ERC-20/721 token, no `transfer`** — so HWM cannot leak across addresses.
+Positions are an internal ledger — **no ERC-20/721 token, no `transfer`** — so they cannot be moved between addresses.
 
----
-
-## 3. Fee math (`HwmFeeMath`)
-
-Let `curRatio = underlying.convertToAssets(SHARE_UNIT)` — asset base-units per one whole underlying share (already net of the underlying's own fees and incorporating P2P's NAV oracle for UltraYield).
+## 3. Fee math (`FeeMath`)
 
 ```
-// deposit
-depositFee = mulDiv(assets, depositFeeBps, 10_000)            // round up (protocol-favoring)
-netDeposit = assets - depositFee
-
-// performance (per position), asset units
-perfAssets = curRatio > hwm
-    ? mulDiv((curRatio - hwm) * positionShares, perfFeeBps, SHARE_UNIT * 10_000)   // round down to user-favor on value, fee shares round up
-    : 0
-perfShares = mulDivUp(perfAssets, SHARE_UNIT, curRatio)        // shares worth perfAssets, round up
-// crystallize: position.shares -= perfShares; accruedFeeShares += perfShares; hwm = max(hwm, curRatio)
-
-// withdrawal (on exit), asset units
-withdrawFee = mulDiv(assetsOut, withdrawFeeBps, 10_000)        // round up
-netOut = assetsOut - withdrawFee  → user; withdrawFee → feeRecipient
+depositFee   = ceil(assets     * depositFeeBps    / 10_000)        // at deposit, on the deposited asset
+withdrawalFee= ceil(assetsGross* withdrawalFeeBps / 10_000)        // at withdrawal, on the redeemed asset
+aumFee       = ceil(assetsGross* aumFeePerBlock * blocksElapsed / 1e18)   // at withdrawal, by blocks held
 ```
 
-**Invariants**
-- `hwm` only increases (ratchet). A position below its `hwm` accrues **zero** perf fee until it recovers — true HWM.
-- `hwm` is a **price**, untouched by changing `shares` (partial withdrawals preserve it).
-- Two positions with different `hwm` at the same `curRatio` pay **different** perf fees → **not socialized**.
-- `Σ position.shares + accruedFeeShares == underlying.balanceOf(collector)` (sync) / `+ Σ pending.shares` while requests are outstanding (async).
+`assetsGross` = the asset amount the collector actually receives from `underlying.redeem` (i.e. **net of the underlying's own native fee**). `blocksElapsed = block.number − lastBlock`. All fees round **up** (partner-favoring). On exit the partner cut is clamped to `assetsGross` (so the user net never underflows); in practice the 5% caps keep it well below.
 
----
+**AUM start block (`lastBlock`)**
+- First deposit: `lastBlock = block.number`.
+- Top-up: `lastBlock = (oldShares·oldLastBlock + newShares·block.number) / (oldShares + newShares)` — share-weighted, defers AUM to withdrawal, fair across tranches.
+- Partial withdrawal: `lastBlock` unchanged (the remainder keeps accruing from its original start).
+- Async: the requested parcel carries the position's `lastBlock` (share-weighted across multiple requests); AUM accrues through to `claim`.
 
 ## 4. Flows
 
-### 4.1 Deposit (both collectors)
-1. `asset.transferFrom(user, collector, assets)`.
-2. `(depositFee, net) = split`; `asset.transfer(feeRecipient, depositFee)`.
-3. **Crystallize** existing position at `curRatio` (skim `perfShares` → `accruedFeeShares`).
-4. `underlying.deposit(net, collector)` → `newShares`.
-5. `position.shares += newShares`; `position.hwm = max(hwm, curRatio)` (first deposit: `hwm = curRatio`).
+**Deposit** (both): pull `assets` → `depositFee` to partner → `underlying.deposit(assets−fee)` → credit `Position` (update weighted `lastBlock`, `shares += minted`).
 
-### 4.2 Sync withdraw (`FluidLiteFeeCollector`)
-1. Crystallize position at `curRatio`.
-2. `assetsOut = underlying.redeem(sharesToRedeem, collector, collector)`.
-3. `(withdrawFee, net) = split`; `asset.transfer(feeRecipient, withdrawFee)`; `asset.transfer(receiver, net)`.
-4. `position.shares -= sharesToRedeem`; `hwm` preserved.
+**Sync withdraw** (`FluidLiteFeeCollector`): `withdraw(shares)` / `withdrawAll()` (user) or `withdrawFor(user, shares)` / `withdrawAllFor(user)` (partner). Reduce position → `underlying.redeem(shares)` → split `assetsGross` into withdrawal + AUM fee (to partner) and net (to the **user**).
 
-### 4.3 Async exit (`UltraYieldFeeCollector`)
-- `requestRedeem(shares)`: crystallize at `curRatio` (locks perf fee); `position.shares -= shares`; `pending.shares += shares`; `underlying.requestRedeem(shares, collector, collector)`.
-- *(operator P2P/Edge calls `underlying.fulfillRedeem` on the underlying — out of collector scope.)*
-- `claim(receiver)`: `assetsOut = underlying.redeem(pending.shares, collector, collector)`; withdrawal fee; net → receiver; clear pending. **No further perf fee** (locked at request).
-- `cancelRequest()`: `underlying.cancelRedeemRequest`; move `pending.shares` back to `position.shares`.
+**Async exit** (`UltraYieldFeeCollector`): `requestRedeem(shares)` (user) / `requestRedeemFor(user, shares)` (partner) move shares to `pending` and call `underlying.requestRedeem(…, collector, collector)`. After the operator fulfills on the underlying, `claim()` (user) / `claimFor(user)` (partner) `redeem` the fulfilled amount, split fees to partner, net to the **user**. No fee charged at request.
 
-### 4.4 Fee collection
-`collectFees()`: redeem `accruedFeeShares` from the underlying to `feeRecipient` (sync immediate; async via request/claim by `feeRecipient`/owner). Resets `accruedFeeShares`.
+**Fees**: there is no separate collection step — the deposit fee is paid at deposit and the withdrawal + AUM fees at withdrawal/claim, directly to `partner`.
 
----
+## 5. Security considerations
+- **Net always to the user**: every exit (user- or partner-initiated) sends net assets to the position owner; the partner only ever receives fees → partner cannot take principal.
+- **Per-user isolation**: exits are keyed to the position owner; positions are non-transferable.
+- **Reentrancy**: `nonReentrant` on all mutating entry points; state updated before external `redeem`/`transfer` (CEI).
+- **Caps on the new value** in `setFees`; fee total clamped to redeemed gross.
+- **Access**: `Ownable2Step` owner (P2P) sets fees/partner/pause; `partner`-only for the `*For` withdrawals; the operator role for async fulfillment lives on the **underlying**, not here.
+- **Reviewed**: adversarial review (fund-safety, accounting, simplicity) returned **0 confirmed findings**.
 
-## 5. Decimal handling
-- `SHARE_UNIT = 10**underlying.decimals()` (fLiteUSD shares 18-dec; UltraVault shares = asset-dec).
-- `curRatio` and `hwm` share the unit "asset base-units per whole share", so subtraction is exact.
-- `perfAssets = (curRatio - hwm) * shares / SHARE_UNIT` keeps share-count scaling exact regardless of asset decimals.
-- All `mulDiv` via OpenZeppelin `Math`; fee components round **up**, user payouts round **down**.
-
----
-
-## 6. Security considerations
-- **Reentrancy**: `nonReentrant` on deposit/withdraw/request/claim/collect; checks-effects-interactions (state updated before external `transfer`/`redeem`).
-- **Pooled custody**: single collector custodies underlying shares; mitigated by minimal surface + immutable math + audits. `totalManagedShares` invariant asserted in tests.
-- **NAV-oracle trust** (UltraYield): the collector trusts the underlying's `convertToAssets` (P2P-guardrailed/vested). It does not add a second oracle. A spiky price is bounded by the underlying's own jump/drawdown guardrails.
-- **Fee caps**: enforced on the *new* value in `setFees` (avoids the iETHv2 old-value-check bug).
-- **Fee-dodge**: positions non-transferable; HWM keyed to the owning address; cannot be reset by sending shares elsewhere; top-up uses crystallize-then-raise.
-- **Rounding/dust**: protocol-favoring fee rounding; first-deposit safe because the collector tracks underlying shares 1:1 (no internal share minting → no ERC-4626 inflation attack on the collector).
-- **Access control**: `Ownable2Step` for config; `feeRecipient` is the only fee sink; operator role for fulfillment lives on the *underlying*, not the collector.
-
----
-
-## 7. Addresses & environment (mainnet)
-- fLiteUSD (Fluid Lite USD vault): `0x273DA948ACa9261043fbdb2a857BC255ECC29012` (asset = USDC `0xA0b8…eB48`).
-- iETHv2 (Fluid Lite ETH vault): `0xA0D3707c569ff8C87FA923d3823eC5D81c98Be78` (asset = stETH).
-- UltraYield: tested via self-deployed real `UltraVault` on the fork (no canonical mainnet instance referenced here).
-- Fork: pinned recent block; RPC via `MAINNET_RPC_URL` env or `https://ethereum-rpc.publicnode.com` fallback.
-
----
-
-## 8. Out of scope (this repo)
-Off-chain HWM indexer; NFT-position variant; KYC/identity-bound positions; per-user clone path; cross-chain. All are documented extension points in the options analysis.
+## 6. Addresses & environment (mainnet)
+- fLiteUSD (Fluid Lite USD): `0x273DA948ACa9261043fbdb2a857BC255ECC29012` (asset = USDC).
+- UltraYield: tested via a self-deployed real `UltraVault` on the fork.
+- Fork RPC: `MAINNET_RPC_URL` env, else an archive-capable public fallback.
