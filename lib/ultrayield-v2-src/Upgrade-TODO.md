@@ -1,0 +1,15 @@
+TODO-list before contracts upgrade:
+- [ ] add detailed changelog
+- [ ] ensure layout's persistent
+- [ ] initialize `rateProvider` in `BaseControlledAsyncRedeem`
+- [ ] initialize `fundsHolder` in `UltraVault`
+- [ ] initialize `oracle` in `UltraVault`
+- [ ] initialize `instantRedeemExitpoint` in `UltraVault` (new V2 address, set via `initializeV2`)
+- [ ] deploy `UltraVaultFeeLib` library and link it with `UltraVault` (required for fee logic)
+- [ ] deploy `RedeemQueueLib` library and link it with `UltraVault` (already required)
+- [ ] set up exitpoint address: fund it with assets and approve vault to spend
+- [ ] update off-chain integrations for removed functions:
+  - `fulfillRedeem` removed — use `fulfillMultipleRedeems` with single-element arrays
+  - `getPendingRedeemForAsset` / `getClaimableRedeemForAsset` removed — use `getPendingRedeem(asset, controller)` / `getClaimableRedeem(asset, controller)`
+  - `pendingRedeemRequestForAsset` / `claimableRedeemRequestForAsset` removed
+- [ ] update operator/keeper scripts to call `fulfillMultipleRedeems` instead of `fulfillRedeem`

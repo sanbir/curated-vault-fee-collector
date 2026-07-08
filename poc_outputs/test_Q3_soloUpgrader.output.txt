@@ -1,0 +1,36 @@
+Compiling 1 files with Solc 0.8.28
+Solc 0.8.28 finished in 1.79s
+Compiler run successful with warnings:
+Warning (5740): Unreachable code.
+   --> lib/openzeppelin-contracts-upgradeable/contracts/token/ERC20/extensions/ERC4626Upgradeable.sol:226:9:
+    |
+226 |         _withdraw(_msgSender(), receiver, owner, assets, shares);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (5740): Unreachable code.
+   --> lib/openzeppelin-contracts-upgradeable/contracts/token/ERC20/extensions/ERC4626Upgradeable.sol:228:9:
+    |
+228 |         return shares;
+    |         ^^^^^^^^^^^^^
+
+Warning (5740): Unreachable code.
+   --> lib/openzeppelin-contracts-upgradeable/contracts/token/ERC20/extensions/ERC4626Upgradeable.sol:239:9:
+    |
+239 |         _withdraw(_msgSender(), receiver, owner, assets, shares);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (5740): Unreachable code.
+   --> lib/openzeppelin-contracts-upgradeable/contracts/token/ERC20/extensions/ERC4626Upgradeable.sol:241:9:
+    |
+241 |         return assets;
+    |         ^^^^^^^^^^^^^
+
+
+Ran 1 test for test/ultrayield_v2/V2UpgradeAuthority.t.sol:V2UpgradeAuthorityForkTest
+[PASS] test_Q3_soloUpgraderActsUnilaterally_otherPartyCannotCancel() (gas: 117564)
+Logs:
+  Q3: a single UPGRADER held by one party = unilateral upgrade; a non-UPGRADER party cannot cancel
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 1.70s (462.13ms CPU time)
+
+Ran 1 test suite in 1.71s (1.70s CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)

@@ -1,0 +1,19 @@
+{
+    "wake.compiler.solc.remappings": [
+        "forge-std/=lib/forge-std/src/",
+        "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",
+        "@openzeppelin/contracts/=lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/",
+        "ERC-7540/=lib/ERC-7540-Reference/src/",
+        "src/=lib/ultrayield-src/",
+        "uyv2/=lib/ultrayield-v2-src/",
+        "ERC-7540-Reference/=lib/ERC-7540-Reference/src/",
+        "ds-test/=lib/ERC-7540-Reference/lib/forge-std/lib/ds-test/src/",
+        "erc4626-tests/=lib/openzeppelin-contracts-upgradeable/lib/erc4626-tests/",
+        "halmos-cheatcodes/=lib/openzeppelin-contracts-upgradeable/lib/halmos-cheatcodes/src/",
+        "openzeppelin-contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/",
+        "openzeppelin-contracts/=lib/openzeppelin-contracts/",
+        "solmate/=lib/ERC-7540-Reference/lib/solmate/src/",
+        "ultrayield-src/=lib/ultrayield-src/",
+        "ultrayield-v2-src/=lib/ultrayield-v2-src/"
+    ]
+}

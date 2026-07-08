@@ -1,0 +1,10 @@
+No files changed, compilation skipped
+
+Ran 1 test for test/ultrayield_v2/V2UpgradeAuthority.t.sol:V2UpgradeAuthorityForkTest
+[PASS] test_P4_Timelocks_3dForDeps_7dForModule() (gas: 593369)
+Logs:
+  P4-timelocks: deps = 3 days, upgrade module = 7 days (no 21-day value anywhere)
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 916.65ms (849.75µs CPU time)
+
+Ran 1 test suite in 918.68ms (916.65ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)

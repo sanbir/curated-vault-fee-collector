@@ -1,0 +1,10 @@
+No files changed, compilation skipped
+
+Ran 1 test for test/ultrayield_v2/V2UpgradeAuthority.t.sol:V2UpgradeAuthorityForkTest
+[PASS] test_P1_caveat_dangerWindow_ifOwnerDoesNotActWithin7Days() (gas: 112382)
+Logs:
+  P1-caveat: recovery is NOT automatic - owner must act within 7d and be uncompromised
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 911.67ms (362.71µs CPU time)
+
+Ran 1 test suite in 912.94ms (911.67ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)

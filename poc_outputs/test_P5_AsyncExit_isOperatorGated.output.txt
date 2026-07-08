@@ -1,0 +1,10 @@
+No files changed, compilation skipped
+
+Ran 1 test for test/ultrayield_v2/V2UpgradeAuthority.t.sol:V2UpgradeAuthorityForkTest
+[PASS] test_P5_AsyncExit_isOperatorGated() (gas: 35619)
+Logs:
+  P5: exit conversion is operator-gated; 'enough time to exit' holds only under honest ops
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 1.19s (227.16ms CPU time)
+
+Ran 1 test suite in 1.20s (1.19s CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)

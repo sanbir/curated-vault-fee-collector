@@ -1,0 +1,10 @@
+No files changed, compilation skipped
+
+Ran 1 test for test/ultrayield_v2/V2UpgradeAuthority.t.sol:V2UpgradeAuthorityForkTest
+[PASS] test_P2_UpgradeSucceedsWhileVaultIsPaused() (gas: 91502)
+Logs:
+  P2: upgrade-while-paused works by design; pause is NOT the upgrade stopper
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 959.40ms (213.50µs CPU time)
+
+Ran 1 test suite in 960.49ms (959.40ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
