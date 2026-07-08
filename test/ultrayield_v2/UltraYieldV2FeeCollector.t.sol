@@ -42,14 +42,12 @@ interface ILiveUltraVaultV2 is IERC4626 {
 /// USDC token balances needed to exercise the existing funds-holder and exitpoint pull paths.
 contract UltraYieldV2FeeCollectorLiveForkTest is BaseFork {
     address internal constant LIVE_VAULT = 0x02f4301b684600129913B66aEf9BE2c230a3BcAd;
-    address internal constant LIVE_IMPLEMENTATION = 0x7f88A6c05EB87cCf7f1058D6477Bd542B901Da1E;
     address internal constant VAULT_ADMIN = 0x8d371EDcda960C746d0414139d15afF63E6b0516;
     address internal constant REDEEM_OPERATOR = 0x2Af4561F4344dCf58f76ADB29Da40ab950Bec544;
     address internal constant LIVE_FUNDS_HOLDER = 0xCa064C3080Db16133d4Ec48E768F2685f149Ea78;
     address internal constant LIVE_EXITPOINT = 0xD26E2e76442432aEEaC8e8D43Fa6f2421014F79b;
     bytes32 internal constant ALLOWLIST_ROLE = 0x26a560d834a19637eccba4611bbc09fb32970bb627da0a70f14f83fdc9822cbc;
     bytes32 internal constant DEFAULT_ADMIN_ROLE = bytes32(0);
-    bytes32 internal constant IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
     // A pinned block after the V2 deployment, less than 1,000 blocks behind the live head at test authoring.
     uint256 internal constant LIVE_FORK_BLOCK = 25_485_000;
@@ -140,9 +138,7 @@ contract UltraYieldV2FeeCollectorLiveForkTest is BaseFork {
         return fulfilled[0];
     }
 
-    function test_LiveDeploymentIdentityAndOperationalPreconditions() public view {
-        address implementation = address(uint160(uint256(vm.load(LIVE_VAULT, IMPLEMENTATION_SLOT))));
-        assertEq(implementation, LIVE_IMPLEMENTATION, "unexpected live implementation");
+    function test_LiveVaultCompatibilityAndOperationalPreconditions() public view {
         assertEq(vault.asset(), USDC, "collector assumes the vault's base asset");
         assertEq(vault.fundsHolder(), LIVE_FUNDS_HOLDER, "unexpected funds holder");
         assertEq(vault.instantRedeemExitpoint(), LIVE_EXITPOINT, "unexpected exitpoint");

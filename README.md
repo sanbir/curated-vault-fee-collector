@@ -1,68 +1,53 @@
 # Curated Vault Fee Collector
 
-A thin **partner fee layer** on top of curated **UltraYield** (ERC-7540 async) and **Fluid Lite** (ERC-4626 sync)
-vaults. The underlying vaults keep their **own native fees** (charged by P2P + Edge); this layer adds three
-fees that accrue to a **Partner** (the wallet/custody platform that brings end users):
+A partner-fee layer for UltraYield V2 async vaults and Fluid Lite synchronous ERC-4626 vaults. The underlying
+vault keeps its native fees; the collector adds deposit, withdrawal, and per-block AUM fees paid directly to the
+partner.
 
-- **deposit fee** — % of the deposit, taken at deposit time;
-- **withdrawal fee** — % of redeemed assets, taken at withdrawal;
-- **AUM fee** — a per-**block** fraction of assets under management, taken at withdrawal.
+The collector custodies underlying vault shares and records a non-transferable internal position per user. Both
+the user and partner can initiate exits, but principal always goes to the user.
 
-Both the **user** and the **partner** can withdraw any amount at any time — and in every case the **net assets go
-to the user, the fees to the partner**. There is no performance/high-water-mark fee (handled by the underlying
-vaults) and no fee-collection step (fees are paid straight to the partner when charged).
-
-See [`docs/ADR.md`](docs/ADR.md), [`docs/Architecture.md`](docs/Architecture.md),
-[`docs/Implementation-plan.md`](docs/Implementation-plan.md).
-
-## Contracts (`contracts/`)
+## Contracts
 
 | Contract | Underlying | Exit model |
 |---|---|---|
-| `FluidLiteFeeCollector` | synchronous ERC-4626 (fLiteUSD, iETHv2) | one-tx `withdraw` / `withdrawFor` |
-| `UltraYieldFeeCollector` | ERC-7540 async (UltraYield `UltraVault`) | `requestRedeem` → operator fulfill → `claim` (+ `*For` partner variants) |
-| `CuratedFeeCollectorBase` | — | shared deposit / fee-settlement / admin / partner auth |
-| `libraries/FeeMath` | — | pure: deposit/withdrawal %, per-block AUM |
+| `UltraYieldV2FeeCollector` | UltraYield V2 allowlist vault | async request/fulfill/claim and instant redeem |
+| `FluidLiteFeeCollector` | synchronous ERC-4626 | synchronous redeem |
+| `CuratedFeeCollectorBase` | shared | deposit, fee settlement, positions, administration |
+| `FeeMath` | shared | deposit, withdrawal, and per-block AUM arithmetic |
 
-The collector custodies the underlying shares and tracks a **non-transferable** per-user `Position{shares, lastBlock}`.
-`lastBlock` is the AUM accrual start (share-weighted across top-ups), so AUM is deferred to withdrawal and fair
-across tranches. `Ownable2Step` owner (P2P) sets fees/partner/pause; caps: deposit ≤ 5%, withdrawal ≤ 5%,
-`aumFeePerBlock ≤ 1e12` (WAD/block). `ReentrancyGuard` + `Pausable`; fees round up; the partner cut is clamped to
-the redeemed gross.
+`UltraYieldV2FeeCollector` is address-agnostic: its constructor accepts the target vault proxy as `IERC4626` and
+uses the minimal `IUltraVaultV2` interface. It does not hardcode an implementation or deployment address.
 
-## Tests — mainnet fork, no mocks
+For V2 deposits, both the funder and internal-position beneficiary must pass the target vault's `isAllowed`
+check. The collector itself must also be allowlisted by the vault administrator because it receives and custodies
+the actual vault shares. Exit paths remain open after a user is removed from the allowlist.
 
-22 tests, **no `vm.mockCall`**:
+## Tests
 
-- `test/unit/FeeMath.t.sol` — deposit/withdrawal % + per-block AUM math, incl. fuzz (AUM monotonic in blocks, fee ≤ amount).
-- `test/fluidlite/FluidLiteFeeCollector.t.sol` — live **fLiteUSD** vault: deposit fee → partner; withdrawal + AUM
-  fee → partner with net → user; **partner-initiated** `withdrawAllFor` (net to the user); AUM scales with blocks
-  (`vm.roll`); no-AUM same block; top-up blends the start block; partial withdraw preserves it; caps/access/pause/
-  custody-only. (Expected fees use `previewRedeem`, which accounts for fLiteUSD's own native withdrawal fee.)
-- `test/ultrayield/UltraYieldFeeCollector.t.sol` — **self-deployed real UltraYield** vault: deposit fee; full async
-  request → operator-fulfill → claim with withdrawal + AUM fees charged at claim; partner `requestRedeemAllFor` /
-  `claimFor` (net to the user); `onlyPartner` guard.
+The V2 integration suite forks mainnet at a pinned recent block and exercises an existing V2 test deployment
+without `vm.mockCall` or protocol redeployment. Coverage includes:
 
-### Run
+- vault-admin onboarding of the collector;
+- funder and beneficiary KYC checks;
+- deposit fee and real funds-holder transfer;
+- async request, operator fulfillment, partial fulfillment, and claims;
+- instant redemption and native-fee stacking;
+- pooled multi-user accounting and partner-driven exits;
+- successful async and instant exit after user allowlist removal.
 
 ```bash
-export MAINNET_RPC_URL=https://your-archive-rpc   # optional; archive fallback used otherwise
+export MAINNET_RPC_URL=https://your-mainnet-rpc
 forge test -vv
 ```
 
-### Latest result
-
-```
-6 unit + 12 fLiteUSD (live) + 4 UltraYield (real deploy) = 22 passed, 0 failed
-```
-
-Adversarial review (fund-safety, accounting, simplicity): **0 confirmed findings** — partner can only ever take the
-capped fees, never principal; net always reaches the user; per-block AUM blending verified correct.
+Latest result: `47 passed, 0 failed`.
 
 ## Layout
-```
-contracts/   collectors + FeeMath + interface
-test/        unit/ + fluidlite/ (live) + ultrayield/ (real deploy)
-docs/        ADR, Architecture, Implementation-plan
-lib/         forge-std, openzeppelin-contracts(-upgradeable), ERC-7540-Reference, ultrayield-src (test-only)
+
+```text
+contracts/   V2/Fluid collectors, minimal interfaces, and FeeMath
+test/        unit, Fluid Lite fork, and UltraYield V2 fork tests
+docs/        architecture and operational decisions
+lib/         Foundry, OpenZeppelin, ERC-7540, and UltraYield V2 test sources
 ```

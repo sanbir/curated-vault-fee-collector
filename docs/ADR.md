@@ -40,12 +40,19 @@ The earlier high-water-mark **performance fee** is **removed** — performance e
 ### D4 — Custody-only, non-transferable positions (retained)
 The collector custodies the underlying shares and credits each user a non-transferable internal `Position{shares, lastBlock}`. No position token, no `transfer`. This is unchanged from before and keeps per-user accounting un-gameable.
 
-### D5 — Two collectors sharing a base (sync vs async exit)
+### D5 — UltraYield V2 only; two collectors sharing a base
 - `FluidLiteFeeCollector` — synchronous ERC-4626 exit (one tx).
-- `UltraYieldFeeCollector` — ERC-7540 async: `requestRedeem` → operator fulfills on the underlying → `claim`; withdrawal + AUM fees charged at **claim** (AUM accrues through to claim).
+- `UltraYieldV2FeeCollector` — UltraYield V2 async request/fulfill/claim plus instant redeem. Legacy V1 support
+  is intentionally removed.
 - `CuratedFeeCollectorBase` holds the shared deposit, fee-settlement, admin, and partner logic; `FeeMath` is a tiny pure library (deposit/withdrawal %, per-block AUM).
 
-### D6 — Caps enforced on the new value; standard safety
+### D6 — Reuse the selected V2 vault's allowlist at deposit
+- The V2 collector accepts a vault proxy in its constructor and never hardcodes an implementation address.
+- Both the funder and beneficiary must pass that vault's `isAllowed` check.
+- The collector itself must be allowlisted because it receives the real vault shares.
+- Exits remain ungated so later de-listing cannot trap an existing user position.
+
+### D7 — Caps enforced on the new value; standard safety
 `Ownable2Step` owner (P2P) sets fees + partner + pause. Caps: `MAX_DEPOSIT_FEE = 5%`, `MAX_WITHDRAWAL_FEE = 5%`, `MAX_AUM_FEE_PER_BLOCK = 1e12` (WAD/block safety cap). `ReentrancyGuard` on all mutating entry points; `Pausable` gates deposits; fees round up (partner-favoring); fee total is clamped to the redeemed gross so the user net never underflows.
 
 ---
@@ -54,7 +61,7 @@ The collector custodies the underlying shares and credits each user a non-transf
 - **Keep the per-user HWM performance fee** — rejected: the underlying vaults already charge native performance/management fees; a second performance fee is redundant and far more complex (crystallization, fee-share pool, oracle-ratio tracking). Removing it is the explicit simplification requested.
 - **Charge AUM at deposit (settle on top-up)** — rejected: requires realizing value mid-deposit; the share-weighted `lastBlock` defers all fee realization to withdrawal with less code.
 - **Time-based (seconds) AUM** — rejected: the requirement is explicitly per-block.
-- **Single collector for both vault types** — rejected: async vs sync exits differ; two thin contracts over a shared base are simpler to read and audit.
+- **Legacy UltraYield support** — rejected: only UltraYield V2 is in scope.
 
 ---
 
