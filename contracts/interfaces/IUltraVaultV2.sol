@@ -11,6 +11,9 @@ pragma solidity 0.8.28;
 ///             withdrawal fee + instant premium).
 ///         Deposit / convertToAssets / asset / redeem keep their ERC-4626 shapes (inherited via IERC4626).
 interface IUltraVaultV2 {
+    /// @notice Whether an account currently passes the deployed UltraYield vault's KYC allowlist.
+    function isAllowed(address account) external view returns (bool);
+
     /// @notice Request an async redeem. `autoClaim=false` so the collector claims explicitly and can
     ///         charge its partner fees at claim time.
     function requestRedeem(address asset, uint256 shares, address controller, address owner, bool autoClaim)

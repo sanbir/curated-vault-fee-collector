@@ -26,6 +26,11 @@ import {IUltraVaultV2} from "./interfaces/IUltraVaultV2.sol";
 ///
 ///         In both routes assets go to the user and fees to the partner. Both the user and the partner
 ///         can drive either route (the partner via the `*For` variants).
+///
+///         Deposits reuse the underlying UltraYield vault's KYC list: both the account funding the
+///         deposit and the beneficiary receiving the internal position must currently be allowed.
+///         Exit paths intentionally do not repeat this check, so later allowlist removal cannot trap
+///         shares already custodied by the collector.
 contract UltraYieldV2FeeCollector is CuratedFeeCollectorBase {
     using SafeERC20 for IERC20;
 
@@ -46,6 +51,7 @@ contract UltraYieldV2FeeCollector is CuratedFeeCollectorBase {
 
     error UltraYieldV2FeeCollector__NothingToClaim();
     error UltraYieldV2FeeCollector__SlippageExceeded(uint256 net, uint256 minNet);
+    error UltraYieldV2FeeCollector__NotAllowed(address account);
 
     constructor(
         IERC4626 _underlying,
@@ -62,6 +68,13 @@ contract UltraYieldV2FeeCollector is CuratedFeeCollectorBase {
 
     function _v() private view returns (IUltraVaultV2) {
         return IUltraVaultV2(address(i_underlying));
+    }
+
+    /// @dev Reuse UltraYield's KYC list for both the source of funds and the internal position owner.
+    ///      This hook only runs on deposit: later removal from the list must not trap an existing position.
+    function _beforeDeposit(address _funder, address _receiver) internal view override {
+        if (!_v().isAllowed(_funder)) revert UltraYieldV2FeeCollector__NotAllowed(_funder);
+        if (!_v().isAllowed(_receiver)) revert UltraYieldV2FeeCollector__NotAllowed(_receiver);
     }
 
     // --------------------------------------------------------------------

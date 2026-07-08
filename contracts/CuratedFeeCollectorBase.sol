@@ -91,6 +91,7 @@ abstract contract CuratedFeeCollectorBase is Ownable2Step, Pausable, ReentrancyG
         if (_assets == 0) revert CuratedFeeCollector__ZeroAmount();
         if (_receiver == address(0)) revert CuratedFeeCollector__ZeroAddress();
 
+        _beforeDeposit(msg.sender, _receiver);
         i_asset.safeTransferFrom(msg.sender, address(this), _assets);
 
         uint256 fee = FeeMath.bpsFee(_assets, s_depositFeeBps);
@@ -110,6 +111,10 @@ abstract contract CuratedFeeCollectorBase is Ownable2Step, Pausable, ReentrancyG
 
         emit CuratedFeeCollector__Deposited(_receiver, _assets, fee, shares);
     }
+
+    /// @dev Optional integration-specific admission check. Exit paths intentionally have no matching hook,
+    ///      so a user who becomes ineligible after depositing can always recover their existing position.
+    function _beforeDeposit(address _funder, address _receiver) internal view virtual {}
 
     // --------------------------------------------------------------------
     // Fee settlement on exit (shared by the sync + async exit paths)

@@ -1,116 +1,114 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {console2} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
-import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {BaseFork} from "../BaseFork.t.sol";
 import {UltraYieldV2FeeCollector} from "../../contracts/UltraYieldV2FeeCollector.sol";
 import {CuratedFeeCollectorBase} from "../../contracts/CuratedFeeCollectorBase.sol";
 import {FeeMath} from "../../contracts/libraries/FeeMath.sol";
 
-// Real UltraYield *V2* protocol code, compiled & deployed onto the fork (NOT a mock).
-import {UltraVault, UltraVaultInitParams} from "uyv2/vaults/UltraVault.sol";
-import {UltraVaultOracle} from "uyv2/oracles/UltraVaultOracle.sol";
-import {UltraVaultRateProvider} from "uyv2/oracles/UltraVaultRateProvider.sol";
-import {Fees} from "uyv2/interfaces/Types.sol";
-import {ORACLE_KEY} from "uyv2/utils/AddressKeys.sol";
+interface ILiveUltraVaultV2 is IERC4626 {
+    function addToAllowlist(address account) external;
+    function removeFromAllowlist(address account) external;
+    function isAllowed(address account) external view returns (bool);
+    function isAllowlistEnabled() external view returns (bool);
+    function paused() external view returns (bool);
+    function fundsHolder() external view returns (address);
+    function feeRecipient() external view returns (address);
+    function instantRedeemExitpoint() external view returns (address);
+    function hasRole(bytes32 role, address account) external view returns (bool);
+    function grantRole(bytes32 role, address account) external;
+    function getLiquidity(address asset) external view returns (uint256);
+    function previewInstantRedeem(address asset, uint256 shares) external view returns (uint256);
+    function getPendingRedeem(address asset, address controller)
+        external
+        view
+        returns (uint256 shares, uint256 requestTime);
+    function getClaimableRedeem(address asset, address controller)
+        external
+        view
+        returns (uint256 assets, uint256 shares);
+    function fulfillMultipleRedeems(
+        address[] calldata assets,
+        uint256[] calldata shares,
+        address[] calldata controllers
+    ) external returns (uint256[] memory assetsFulfilled);
+}
 
-/// @notice Fork tests for the V2 partner-fee collector against a REAL self-deployed UltraYield **V2**
-///         vault (UltraVault + UltraVaultOracle + UltraVaultRateProvider, no mocks). The test contract
-///         is the vault owner (hence operator/pauser/admin via the role grants in initialize), the
-///         fundsHolder (backs async redemptions), and drives operator fulfilment.
-///
-///         Covered:
-///           - deposit fee taken to the partner,
-///           - ASYNC exit (request -> operator fulfillMultipleRedeems -> claim): partner withdrawal + AUM
-///             fees charged at claim, net to the user,
-///           - INSTANT exit (V2): synchronous redeem against exitpoint liquidity, partner fees charged,
-///           - partner-driven variants for both routes,
-///           - the partner layer stacking ON TOP of the vault's OWN native withdrawal fee,
-///           - access control + instant slippage guard.
-contract UltraYieldV2FeeCollectorForkTest is BaseFork {
-    UltraVaultRateProvider internal rp;
-    UltraVaultOracle internal oracle;
-    UltraVault internal vault;
-    UltraYieldV2FeeCollector internal collector;
+/// @notice Mainnet-fork integration tests against the deployed UltraYield V2 proxy and implementation.
+/// No protocol contracts are redeployed and no external call is mocked. `deal` only supplies the real
+/// USDC token balances needed to exercise the existing funds-holder and exitpoint pull paths.
+contract UltraYieldV2FeeCollectorLiveForkTest is BaseFork {
+    address internal constant LIVE_VAULT = 0x02f4301b684600129913B66aEf9BE2c230a3BcAd;
+    address internal constant LIVE_IMPLEMENTATION = 0x7f88A6c05EB87cCf7f1058D6477Bd542B901Da1E;
+    address internal constant VAULT_ADMIN = 0x8d371EDcda960C746d0414139d15afF63E6b0516;
+    address internal constant REDEEM_OPERATOR = 0x2Af4561F4344dCf58f76ADB29Da40ab950Bec544;
+    address internal constant LIVE_FUNDS_HOLDER = 0xCa064C3080Db16133d4Ec48E768F2685f149Ea78;
+    address internal constant LIVE_EXITPOINT = 0xD26E2e76442432aEEaC8e8D43Fa6f2421014F79b;
+    bytes32 internal constant ALLOWLIST_ROLE = 0x26a560d834a19637eccba4611bbc09fb32970bb627da0a70f14f83fdc9822cbc;
+    bytes32 internal constant DEFAULT_ADMIN_ROLE = bytes32(0);
+    bytes32 internal constant IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
-    address internal partner;
-    address internal alice;
-    address internal vaultFees; // the vault's OWN feeRecipient (distinct from partner)
-    address internal exitpoint; // instant-redeem liquidity wallet
+    // A pinned block after the V2 deployment, less than 1,000 blocks behind the live head at test authoring.
+    uint256 internal constant LIVE_FORK_BLOCK = 25_485_000;
 
     uint16 internal constant DEP = 100; // 1% partner deposit fee
     uint16 internal constant WD = 50; // 0.5% partner withdrawal fee
-    uint256 internal constant AUM = 1e9; // partner AUM fee per block (1e-9 of AUM/block)
-    uint256 internal constant ONE = 1e18; // oracle share price 1:1
+    uint256 internal constant AUM = 1e9; // 1e-9 of redeemed assets per block
+
+    ILiveUltraVaultV2 internal vault = ILiveUltraVaultV2(LIVE_VAULT);
+    UltraYieldV2FeeCollector internal collector;
+    UltraYieldV2FeeCollector internal unlistedCollector;
+
+    address internal owner;
+    address internal partner;
+    address internal alice;
+    address internal bob;
+    address internal carol;
 
     function setUp() public {
-        _fork();
+        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), LIVE_FORK_BLOCK);
+
+        owner = makeAddr("owner");
         partner = makeAddr("partner");
         alice = makeAddr("alice");
-        vaultFees = makeAddr("vaultFees");
-        exitpoint = makeAddr("exitpoint");
+        bob = makeAddr("bob");
+        carol = makeAddr("carol");
 
-        // 1) Rate provider: V2 is non-upgradeable; ctor auto-adds USDC as the pegged base asset.
-        rp = new UltraVaultRateProvider(address(this), USDC);
+        unlistedCollector = _deployCollector();
+        collector = _deployCollector();
 
-        // 2) Vault implementation.
-        UltraVault vImpl = new UltraVault();
+        // This is the same one-time onboarding transaction required in production. It exercises the
+        // deployed vault's real ALLOWLIST_ROLE and ComplianceLib storage, rather than patching storage.
+        vm.startPrank(VAULT_ADMIN);
+        vault.grantRole(ALLOWLIST_ROLE, VAULT_ADMIN);
+        vault.addToAllowlist(address(collector));
+        vault.addToAllowlist(alice);
+        vault.addToAllowlist(bob);
+        vm.stopPrank();
 
-        // 3) Vault proxy. The oracle ctor reads the vault (asset()/decimals()), and the vault init stores
-        //    the oracle -> circular. initialize() never CALLS the oracle, so we init with a harmless
-        //    placeholder (the rate provider: a non-zero contract) and swap to the real oracle below.
-        Fees memory fees; // all-zero: isolate the partner fees from the vault's own fees
-        UltraVaultInitParams memory p = UltraVaultInitParams({
-            owner: address(this),
-            asset: USDC,
-            name: "UltraYield V2 USDC",
-            symbol: "uy2USDC",
-            rateProvider: address(rp),
-            feeRecipient: vaultFees,
-            fees: fees,
-            oracle: address(rp), // placeholder; replaced via timelock before unpausing
-            fundsHolder: address(this),
-            instantRedeemExitpoint: exitpoint,
-            upgradeModule: makeAddr("upgradeModule")
-        });
-        vault = UltraVault(address(new ERC1967Proxy(address(vImpl), abi.encodeCall(UltraVault.initialize, (p)))));
+        // The live vault pulls async liquidity from its configured funds holder and instant liquidity
+        // from its configured exitpoint. Supply balances and real ERC20 allowances from those addresses.
+        _fund(USDC, LIVE_FUNDS_HOLDER, 20_000_000e6);
+        vm.prank(LIVE_FUNDS_HOLDER);
+        IERC20(USDC).approve(LIVE_VAULT, type(uint256).max);
 
-        // 4) Real oracle now that the vault exists & is initialized; seed price 1:1.
-        oracle = new UltraVaultOracle(address(this), address(vault), ONE);
+        _fund(USDC, LIVE_EXITPOINT, 20_000_000e6);
+        vm.prank(LIVE_EXITPOINT);
+        IERC20(USDC).approve(LIVE_VAULT, type(uint256).max);
 
-        // 5) Swap placeholder -> real oracle through the 3-day ORACLE_KEY timelock.
-        //    acceptAddressUpdate() re-pauses the vault (so operators can verify the new wiring), so it
-        //    requires the vault to be unpaused first; we unpause around it and unpause again at the end.
-        vault.proposeAddressUpdate(ORACLE_KEY, address(oracle));
-        vm.warp(block.timestamp + 3 days + 1);
-        vault.unpause();
-        vault.acceptAddressUpdate(ORACLE_KEY, address(oracle)); // re-pauses
-        vault.unpause();
-
-        // fundsHolder (this) backs async redemptions: hold a buffer and approve the vault to pull.
-        IERC20(USDC).approve(address(vault), type(uint256).max);
-        _fund(USDC, address(this), 5_000_000e6);
-
-        // exitpoint backs instant redemptions: hold liquidity and approve the vault to pull.
-        _fund(USDC, exitpoint, 5_000_000e6);
-        vm.prank(exitpoint);
-        IERC20(USDC).approve(address(vault), type(uint256).max);
-
-        collector = new UltraYieldV2FeeCollector(IERC4626(address(vault)), address(this), partner, DEP, WD, AUM);
-        vm.label(address(vault), "UltraVaultV2");
+        vm.label(LIVE_VAULT, "LiveUltraYieldV2");
         vm.label(address(collector), "UltraYieldV2FeeCollector");
+        vm.label(VAULT_ADMIN, "LiveVaultAdmin");
+        vm.label(REDEEM_OPERATOR, "LiveRedeemOperator");
+        vm.label(LIVE_FUNDS_HOLDER, "LiveFundsHolder");
+        vm.label(LIVE_EXITPOINT, "LiveInstantExitpoint");
     }
 
-    // --------------------------------------------------------------------
-    // helpers
-    // --------------------------------------------------------------------
-
-    function _pendingShares(address user) internal view returns (uint256 s) {
-        (s,) = collector.getPending(user);
+    function _deployCollector() internal returns (UltraYieldV2FeeCollector) {
+        return new UltraYieldV2FeeCollector(IERC4626(LIVE_VAULT), owner, partner, DEP, WD, AUM);
     }
 
     function _deposit(address user, uint256 assets) internal returns (uint256 shares) {
@@ -121,199 +119,323 @@ contract UltraYieldV2FeeCollectorForkTest is BaseFork {
         vm.stopPrank();
     }
 
-    /// @dev Operator (this) fulfils the collector's single pending parcel for `user`.
-    function _fulfill(address user) internal {
+    function _positionShares(address user) internal view returns (uint256 shares) {
+        (shares,) = collector.getPosition(user);
+    }
+
+    function _pendingShares(address user) internal view returns (uint256 shares) {
+        (shares,) = collector.getPending(user);
+    }
+
+    function _fulfill(uint256 shares) internal returns (uint256 assetsFulfilled) {
         address[] memory assets = new address[](1);
-        uint256[] memory shs = new uint256[](1);
-        address[] memory ctrls = new address[](1);
+        uint256[] memory shareAmounts = new uint256[](1);
+        address[] memory controllers = new address[](1);
         assets[0] = USDC;
-        shs[0] = _pendingShares(user);
-        ctrls[0] = address(collector);
-        vault.fulfillMultipleRedeems(assets, shs, ctrls);
+        shareAmounts[0] = shares;
+        controllers[0] = address(collector);
+
+        vm.prank(REDEEM_OPERATOR);
+        uint256[] memory fulfilled = vault.fulfillMultipleRedeems(assets, shareAmounts, controllers);
+        return fulfilled[0];
     }
 
-    // --------------------------------------------------------------------
-    // deposit
-    // --------------------------------------------------------------------
-
-    function test_Deposit_chargesDepositFee() public {
-        _deposit(alice, 100_000e6);
-        assertEq(IERC20(USDC).balanceOf(partner), 1_000e6, "deposit fee 1% -> partner");
-        (uint256 ps,) = collector.getPosition(alice);
-        assertGt(ps, 0, "position recorded");
-        // 99k assets actually deposited at 1:1 -> ~99k shares
-        assertApproxEqAbs(collector.getPositionValue(alice), 99_000e6, 2, "position value = net deposit");
+    function test_LiveDeploymentIdentityAndOperationalPreconditions() public view {
+        address implementation = address(uint160(uint256(vm.load(LIVE_VAULT, IMPLEMENTATION_SLOT))));
+        assertEq(implementation, LIVE_IMPLEMENTATION, "unexpected live implementation");
+        assertEq(vault.asset(), USDC, "collector assumes the vault's base asset");
+        assertEq(vault.fundsHolder(), LIVE_FUNDS_HOLDER, "unexpected funds holder");
+        assertEq(vault.instantRedeemExitpoint(), LIVE_EXITPOINT, "unexpected exitpoint");
+        assertTrue(vault.isAllowlistEnabled(), "live allowlist must be enabled");
+        assertFalse(vault.paused(), "live vault is paused");
+        assertTrue(vault.hasRole(DEFAULT_ADMIN_ROLE, VAULT_ADMIN), "unexpected live vault admin");
+        assertTrue(vault.hasRole(ALLOWLIST_ROLE, VAULT_ADMIN), "vault admin failed to assume allowlist role");
+        assertTrue(vault.isAllowed(address(collector)), "collector was not onboarded");
+        assertFalse(vault.isAllowed(address(unlistedCollector)), "control collector unexpectedly allowlisted");
+        assertEq(IERC20(LIVE_VAULT).allowance(address(collector), LIVE_VAULT), type(uint256).max);
     }
 
-    // --------------------------------------------------------------------
-    // async exit
-    // --------------------------------------------------------------------
+    function test_DepositRevertsUntilCollectorIsAllowlistedByUltraYield() public {
+        uint256 assets = 1000e6;
+        _fund(USDC, alice, assets);
 
-    function test_AsyncExit_feesAtClaim() public {
-        _deposit(alice, 100_000e6);
-        uint256 partnerAfterDep = IERC20(USDC).balanceOf(partner);
+        vm.startPrank(alice);
+        IERC20(USDC).approve(address(unlistedCollector), assets);
+        vm.expectRevert(abi.encodeWithSignature("NotAllowlisted(address)", address(unlistedCollector)));
+        unlistedCollector.deposit(assets, alice);
+        vm.stopPrank();
+    }
 
-        vm.roll(block.number + 1_000_000); // under management for 1e6 blocks
+    function test_DepositRejectsUnallowedFunder() public {
+        uint256 assets = 1000e6;
+        _fund(USDC, carol, assets);
+        uint256 partnerBefore = IERC20(USDC).balanceOf(partner);
 
-        uint256 gross = collector.getPositionValue(alice);
-        uint256 expWd = FeeMath.bpsFee(gross, WD);
-        uint256 expAum = FeeMath.aumFee(gross, AUM, 1_000_000);
+        vm.startPrank(carol);
+        IERC20(USDC).approve(address(collector), assets);
+        vm.expectRevert(
+            abi.encodeWithSelector(UltraYieldV2FeeCollector.UltraYieldV2FeeCollector__NotAllowed.selector, carol)
+        );
+        collector.deposit(assets, alice);
+        vm.stopPrank();
+
+        assertEq(IERC20(USDC).balanceOf(carol), assets, "rejected funder keeps assets");
+        assertEq(IERC20(USDC).balanceOf(partner), partnerBefore, "rejected deposit charges no fee");
+        assertEq(_positionShares(alice), 0, "rejected deposit creates no position");
+    }
+
+    function test_DepositRejectsUnallowedBeneficiary() public {
+        uint256 assets = 1000e6;
+        _fund(USDC, alice, assets);
+
+        vm.startPrank(alice);
+        IERC20(USDC).approve(address(collector), assets);
+        vm.expectRevert(
+            abi.encodeWithSelector(UltraYieldV2FeeCollector.UltraYieldV2FeeCollector__NotAllowed.selector, carol)
+        );
+        collector.deposit(assets, carol);
+        vm.stopPrank();
+
+        assertEq(IERC20(USDC).balanceOf(alice), assets, "rejected beneficiary leaves funder whole");
+        assertEq(_positionShares(carol), 0, "rejected beneficiary gets no position");
+    }
+
+    function test_DepositAllowsDistinctAllowedFunderAndBeneficiary() public {
+        uint256 assets = 1000e6;
+        _fund(USDC, alice, assets);
+
+        vm.startPrank(alice);
+        IERC20(USDC).approve(address(collector), assets);
+        uint256 shares = collector.deposit(assets, bob);
+        vm.stopPrank();
+
+        assertEq(_positionShares(alice), 0, "funder is not automatically beneficiary");
+        assertEq(_positionShares(bob), shares, "allowed beneficiary receives internal position");
+    }
+
+    function test_LiveDepositChargesPartnerAndForwardsNetToRealFundsHolder() public {
+        uint256 assets = 100_000e6;
+        uint256 expectedDepositFee = FeeMath.bpsFee(assets, DEP);
+        uint256 partnerBefore = IERC20(USDC).balanceOf(partner);
+        uint256 fundsHolderBefore = IERC20(USDC).balanceOf(LIVE_FUNDS_HOLDER);
+
+        uint256 shares = _deposit(alice, assets);
+
+        assertEq(IERC20(USDC).balanceOf(partner) - partnerBefore, expectedDepositFee, "partner deposit fee");
+        assertEq(
+            IERC20(USDC).balanceOf(LIVE_FUNDS_HOLDER) - fundsHolderBefore,
+            assets - expectedDepositFee,
+            "live funds holder received net deposit"
+        );
+        assertEq(IERC20(LIVE_VAULT).balanceOf(address(collector)), shares, "collector custodies live shares");
+        assertEq(_positionShares(alice), shares, "internal position matches live shares");
+        assertEq(collector.getTotalShares(), shares, "total active shares");
+        assertGt(shares, 0, "live vault minted no shares");
+    }
+
+    function test_LiveAsyncRequestFulfillClaimChargesWithdrawalAndAumFees() public {
+        uint256 shares = _deposit(alice, 100_000e6);
+        uint256 partnerAfterDeposit = IERC20(USDC).balanceOf(partner);
+        (, uint256 aumStartBlock) = collector.getPosition(alice);
+        vm.roll(block.number + 1_000_000);
+
+        vm.prank(alice);
+        uint256 requestId = collector.requestRedeemAll();
+        assertEq(requestId, 0, "deployed V2 uses the singleton ERC-7540 request id");
+        assertEq(_positionShares(alice), 0, "active position consumed at request");
+        assertEq(_pendingShares(alice), shares, "collector pending parcel");
+        (uint256 livePending,) = vault.getPendingRedeem(USDC, address(collector));
+        assertEq(livePending, shares, "live vault pending parcel");
+        assertEq(IERC20(LIVE_VAULT).balanceOf(LIVE_VAULT), shares, "shares escrowed in live vault");
+
+        uint256 fulfilledAssets = _fulfill(shares);
+        (uint256 claimableAssets, uint256 claimableShares) = vault.getClaimableRedeem(USDC, address(collector));
+        assertEq(claimableShares, shares, "live claimable shares");
+        assertEq(claimableAssets, fulfilledAssets, "live claimable assets");
+
+        uint256 expectedWd = FeeMath.bpsFee(claimableAssets, WD);
+        uint256 expectedAum = FeeMath.aumFee(claimableAssets, AUM, block.number - aumStartBlock);
+        uint256 aliceBefore = IERC20(USDC).balanceOf(alice);
+
+        vm.prank(alice);
+        uint256 net = collector.claim();
+
+        assertEq(IERC20(USDC).balanceOf(alice) - aliceBefore, net, "claim net to user");
+        assertEq(
+            IERC20(USDC).balanceOf(partner) - partnerAfterDeposit,
+            expectedWd + expectedAum,
+            "partner withdrawal plus AUM fees"
+        );
+        assertEq(net, claimableAssets - expectedWd - expectedAum, "net fee equation");
+        assertEq(_pendingShares(alice), 0, "collector pending cleared");
+        assertEq(collector.getTotalPending(), 0, "global pending cleared");
+        assertEq(IERC20(LIVE_VAULT).balanceOf(address(collector)), 0, "all live shares exited");
+    }
+
+    function test_RemovalAfterDepositDoesNotBlockAsyncExit() public {
+        uint256 shares = _deposit(alice, 10_000e6);
+
+        vm.prank(VAULT_ADMIN);
+        vault.removeFromAllowlist(alice);
+        assertFalse(vault.isAllowed(alice), "user was not removed");
 
         vm.prank(alice);
         collector.requestRedeemAll();
-        _fulfill(alice);
+        _fulfill(shares);
 
         uint256 aliceBefore = IERC20(USDC).balanceOf(alice);
         vm.prank(alice);
         uint256 net = collector.claim();
 
-        assertEq(IERC20(USDC).balanceOf(alice) - aliceBefore, net, "net to user");
-        uint256 feesToPartner = IERC20(USDC).balanceOf(partner) - partnerAfterDep;
-        assertApproxEqAbs(feesToPartner, expWd + expAum, 2, "withdrawal + AUM charged at claim -> partner");
-        assertApproxEqAbs(net, gross - expWd - expAum, 2, "user net after partner fees");
-        assertGt(expAum, 0, "AUM accrued over blocks");
-        console2.log("async partner fees (wd+aum) USDC:", feesToPartner);
-        console2.log("async net to user USDC:", net);
+        assertEq(IERC20(USDC).balanceOf(alice) - aliceBefore, net, "removed user receives async exit");
+        assertEq(_pendingShares(alice), 0, "removed user's pending position cleared");
     }
 
-    function test_Async_partnerRequestAndClaimFor() public {
-        _deposit(alice, 100_000e6);
-        uint256 partnerAfterDep = IERC20(USDC).balanceOf(partner);
+    function test_LiveInstantRedeemStacksNativePremiumAndPartnerFees() public {
+        uint256 shares = _deposit(alice, 100_000e6);
+        uint256 partnerAfterDeposit = IERC20(USDC).balanceOf(partner);
+        address nativeFeeRecipient = vault.feeRecipient();
+        uint256 nativeFeeRecipientBefore = IERC20(USDC).balanceOf(nativeFeeRecipient);
+        (, uint256 aumStartBlock) = collector.getPosition(alice);
+        vm.roll(block.number + 250_000);
+
+        uint256 fromVault = vault.previewInstantRedeem(USDC, shares);
+        uint256 grossAtOracle = vault.convertToAssets(shares);
+        uint256 nativePremium = grossAtOracle - fromVault;
+        uint256 expectedWd = FeeMath.bpsFee(fromVault, WD);
+        uint256 expectedAum = FeeMath.aumFee(fromVault, AUM, block.number - aumStartBlock);
+        uint256 expectedNet = fromVault - expectedWd - expectedAum;
         uint256 aliceBefore = IERC20(USDC).balanceOf(alice);
 
-        vm.roll(block.number + 400_000);
-        uint256 gross = collector.getPositionValue(alice);
+        vm.prank(alice);
+        uint256 net = collector.instantRedeemAll(expectedNet);
 
-        // Partner drives the whole async exit on behalf of alice.
+        assertEq(net, expectedNet, "collector net matches both fee layers");
+        assertEq(IERC20(USDC).balanceOf(alice) - aliceBefore, expectedNet, "instant net to user");
+        assertEq(
+            IERC20(USDC).balanceOf(partner) - partnerAfterDeposit,
+            expectedWd + expectedAum,
+            "partner instant withdrawal plus AUM fees"
+        );
+        assertEq(
+            IERC20(USDC).balanceOf(nativeFeeRecipient) - nativeFeeRecipientBefore,
+            nativePremium,
+            "UltraYield native instant premium"
+        );
+        assertEq(_positionShares(alice), 0, "position consumed");
+        assertEq(IERC20(LIVE_VAULT).balanceOf(address(collector)), 0, "live shares burned");
+    }
+
+    function test_RemovalAfterDepositDoesNotBlockInstantExit() public {
+        _deposit(bob, 10_000e6);
+
+        vm.prank(VAULT_ADMIN);
+        vault.removeFromAllowlist(bob);
+        assertFalse(vault.isAllowed(bob), "user was not removed");
+
+        uint256 bobBefore = IERC20(USDC).balanceOf(bob);
+        vm.prank(bob);
+        uint256 net = collector.instantRedeemAll(0);
+
+        assertEq(IERC20(USDC).balanceOf(bob) - bobBefore, net, "removed user receives instant exit");
+        assertEq(_positionShares(bob), 0, "removed user's position cleared");
+    }
+
+    function test_LivePartnerCanDriveAsyncExitButAssetsStillGoToUser() public {
+        uint256 shares = _deposit(alice, 20_000e6);
+        uint256 aliceBefore = IERC20(USDC).balanceOf(alice);
+        uint256 partnerAfterDeposit = IERC20(USDC).balanceOf(partner);
+        vm.roll(block.number + 40_000);
+
         vm.prank(partner);
         collector.requestRedeemAllFor(alice);
-        _fulfill(alice);
+        uint256 fulfilledAssets = _fulfill(shares);
+
         vm.prank(partner);
         uint256 net = collector.claimFor(alice);
 
-        assertEq(IERC20(USDC).balanceOf(alice) - aliceBefore, net, "net assets to the USER");
-        uint256 feesToPartner = IERC20(USDC).balanceOf(partner) - partnerAfterDep;
-        assertApproxEqAbs(
-            feesToPartner, FeeMath.bpsFee(gross, WD) + FeeMath.aumFee(gross, AUM, 400_000), 2, "fees to partner"
-        );
-        (uint256 ps,) = collector.getPosition(alice);
-        assertEq(ps, 0, "position consumed");
+        assertEq(IERC20(USDC).balanceOf(alice) - aliceBefore, net, "partner cannot redirect principal");
+        assertGt(IERC20(USDC).balanceOf(partner) - partnerAfterDeposit, 0, "partner charged no exit fees");
+        assertLt(net, fulfilledAssets, "partner exit fees were not deducted");
     }
 
-    // --------------------------------------------------------------------
-    // instant exit (V2)
-    // --------------------------------------------------------------------
-
-    function test_InstantExit_chargesPartnerFees() public {
-        _deposit(alice, 100_000e6);
-        uint256 partnerAfterDep = IERC20(USDC).balanceOf(partner);
-
-        vm.roll(block.number + 250_000);
-        uint256 gross = collector.getPositionValue(alice);
-        uint256 expWd = FeeMath.bpsFee(gross, WD);
-        uint256 expAum = FeeMath.aumFee(gross, AUM, 250_000);
-
-        assertGe(collector.getInstantLiquidity(), gross, "exitpoint has enough liquidity");
-
-        uint256 aliceBefore = IERC20(USDC).balanceOf(alice);
-        vm.prank(alice);
-        uint256 net = collector.instantRedeemAll(0);
-
-        assertEq(IERC20(USDC).balanceOf(alice) - aliceBefore, net, "net to user in same tx (synchronous)");
-        uint256 feesToPartner = IERC20(USDC).balanceOf(partner) - partnerAfterDep;
-        assertApproxEqAbs(feesToPartner, expWd + expAum, 2, "withdrawal + AUM charged -> partner");
-        assertApproxEqAbs(net, gross - expWd - expAum, 2, "user net after partner fees");
-        (uint256 ps,) = collector.getPosition(alice);
-        assertEq(ps, 0, "position fully redeemed");
-        console2.log("instant partner fees (wd+aum) USDC:", feesToPartner);
-        console2.log("instant net to user USDC:", net);
-    }
-
-    function test_InstantExit_partnerDriven() public {
-        _deposit(alice, 100_000e6);
-        uint256 partnerAfterDep = IERC20(USDC).balanceOf(partner);
-        uint256 aliceBefore = IERC20(USDC).balanceOf(alice);
-
-        vm.roll(block.number + 100_000);
-        uint256 gross = collector.getPositionValue(alice);
-        uint256 shares = _allShares(alice); // capture before pranking (external call would consume the prank)
-
-        vm.prank(partner);
-        uint256 net = collector.instantRedeemFor(alice, shares, 0);
-
-        assertEq(IERC20(USDC).balanceOf(alice) - aliceBefore, net, "net assets to the USER");
-        uint256 feesToPartner = IERC20(USDC).balanceOf(partner) - partnerAfterDep;
-        assertApproxEqAbs(
-            feesToPartner, FeeMath.bpsFee(gross, WD) + FeeMath.aumFee(gross, AUM, 100_000), 2, "fees to partner"
-        );
-    }
-
-    function _allShares(address user) internal view returns (uint256 s) {
-        (s,) = collector.getPosition(user);
-    }
-
-    function test_InstantExit_slippageGuard() public {
-        _deposit(alice, 100_000e6);
-        uint256 gross = collector.getPositionValue(alice);
-        // Demand more net than is mathematically possible after fees -> revert.
-        vm.prank(alice);
-        vm.expectRevert();
-        collector.instantRedeemAll(gross + 1);
-    }
-
-    // --------------------------------------------------------------------
-    // stacking: partner fee sits ON TOP of the vault's OWN native withdrawal fee
-    // --------------------------------------------------------------------
-
-    function test_AsyncExit_stacksOnTopOfVaultWithdrawalFee() public {
-        // Turn ON the vault's own withdrawal fee (1%, the V2 max), recipient = vaultFees.
-        Fees memory f;
-        f.withdrawalFee = 1e16; // 1%
-        vault.setFees(f);
-
-        _deposit(alice, 100_000e6);
-        uint256 partnerAfterDep = IERC20(USDC).balanceOf(partner);
-        uint256 vaultFeesBefore = IERC20(USDC).balanceOf(vaultFees);
-
-        uint256 grossAtVault = collector.getPositionValue(alice); // ~99k
+    function test_LiveAggregatedUsersCanClaimFromOneVaultController() public {
+        uint256 aliceShares = _deposit(alice, 30_000e6);
+        uint256 bobShares = _deposit(bob, 70_000e6);
 
         vm.prank(alice);
         collector.requestRedeemAll();
-        _fulfill(alice); // vault deducts its 1% here, paid to vaultFees
+        vm.prank(bob);
+        collector.requestRedeemAll();
 
-        uint256 expVaultWd = grossAtVault / 100; // 1%
-        // The collector only ever sees the post-vault-fee amount.
-        uint256 grossToCollector = grossAtVault - expVaultWd;
-        uint256 expPartnerWd = FeeMath.bpsFee(grossToCollector, WD);
+        (uint256 livePending,) = vault.getPendingRedeem(USDC, address(collector));
+        assertEq(livePending, aliceShares + bobShares, "live vault aggregates collector users");
+        _fulfill(aliceShares + bobShares);
 
         uint256 aliceBefore = IERC20(USDC).balanceOf(alice);
         vm.prank(alice);
-        uint256 net = collector.claim();
+        uint256 aliceNet = collector.claim();
+        uint256 bobBefore = IERC20(USDC).balanceOf(bob);
+        vm.prank(bob);
+        uint256 bobNet = collector.claim();
 
-        // vault's own fee landed at vaultFees, partner's fee at partner, both on the same exit.
-        assertEq(IERC20(USDC).balanceOf(alice) - aliceBefore, net, "net to user");
-        assertApproxEqAbs(IERC20(USDC).balanceOf(vaultFees) - vaultFeesBefore, expVaultWd, 2, "vault native wd fee");
-        assertApproxEqAbs(
-            IERC20(USDC).balanceOf(partner) - partnerAfterDep, expPartnerWd, 2, "partner wd fee on net-of-vault gross"
-        );
-        assertApproxEqAbs(net, grossToCollector - expPartnerWd, 2, "user net after BOTH fee layers");
-        console2.log("vault native wd fee USDC:", IERC20(USDC).balanceOf(vaultFees) - vaultFeesBefore);
-        console2.log("partner wd fee USDC:", IERC20(USDC).balanceOf(partner) - partnerAfterDep);
+        assertEq(IERC20(USDC).balanceOf(alice) - aliceBefore, aliceNet, "alice net");
+        assertEq(IERC20(USDC).balanceOf(bob) - bobBefore, bobNet, "bob net");
+        assertEq(_pendingShares(alice), 0, "alice pending cleared");
+        assertEq(_pendingShares(bob), 0, "bob pending cleared");
+        assertEq(collector.getTotalPending(), 0, "aggregate pending cleared");
+        assertEq(IERC20(LIVE_VAULT).balanceOf(address(collector)), 0, "aggregate live shares exited");
     }
 
-    // --------------------------------------------------------------------
-    // access control
-    // --------------------------------------------------------------------
+    function test_LivePartialFulfillmentOnlyClaimsAvailableShares() public {
+        uint256 shares = _deposit(alice, 100_000e6);
+        vm.prank(alice);
+        collector.requestRedeemAll();
 
-    function test_requestFor_onlyPartner() public {
-        _deposit(alice, 1_000e6);
+        uint256 firstParcel = shares / 3;
+        _fulfill(firstParcel);
+        vm.prank(alice);
+        collector.claim();
+
+        assertEq(_pendingShares(alice), shares - firstParcel, "unfulfilled collector shares remain pending");
+        assertEq(collector.getTotalPending(), shares - firstParcel, "global pending tracks remainder");
+        (uint256 livePending,) = vault.getPendingRedeem(USDC, address(collector));
+        assertEq(livePending, shares - firstParcel, "live pending tracks remainder");
+
+        _fulfill(shares - firstParcel);
+        vm.prank(alice);
+        collector.claim();
+        assertEq(_pendingShares(alice), 0, "second claim clears pending");
+        assertEq(collector.getTotalPending(), 0, "second claim clears global pending");
+    }
+
+    function test_LiveInstantSlippageGuardRevertsAtomically() public {
+        uint256 shares = _deposit(alice, 10_000e6);
+        uint256 possibleFromVault = vault.previewInstantRedeem(USDC, shares);
+        uint256 impossibleNet = possibleFromVault + 1;
+        uint256 collectorSharesBefore = IERC20(LIVE_VAULT).balanceOf(address(collector));
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                UltraYieldV2FeeCollector.UltraYieldV2FeeCollector__SlippageExceeded.selector,
+                possibleFromVault - FeeMath.bpsFee(possibleFromVault, WD),
+                impossibleNet
+            )
+        );
+        collector.instantRedeemAll(impossibleNet);
+
+        assertEq(_positionShares(alice), shares, "position rolled back");
+        assertEq(IERC20(LIVE_VAULT).balanceOf(address(collector)), collectorSharesBefore, "live burn rolled back");
+    }
+
+    function test_RequestAndInstantForRemainPartnerOnlyOnLiveVault() public {
+        _deposit(alice, 1000e6);
+
         vm.prank(alice);
         vm.expectRevert(CuratedFeeCollectorBase.CuratedFeeCollector__NotPartner.selector);
         collector.requestRedeemAllFor(alice);
-    }
 
-    function test_instantFor_onlyPartner() public {
-        _deposit(alice, 1_000e6);
         vm.prank(alice);
         vm.expectRevert(CuratedFeeCollectorBase.CuratedFeeCollector__NotPartner.selector);
         collector.instantRedeemFor(alice, 1, 0);
